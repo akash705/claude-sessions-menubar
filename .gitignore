@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode (we regenerate the project from project.yml with XcodeGen)
+*.xcodeproj
+DerivedData/
+xcuserdata/
+*.xcworkspace
+
+# Xcode user settings
+*.xcuserstate

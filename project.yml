@@ -1,0 +1,28 @@
+name: ClaudeSessions
+options:
+  bundleIdPrefix: com.akash
+  deploymentTarget:
+    macOS: "14.0"
+targets:
+  ClaudeSessions:
+    type: application
+    platform: macOS
+    sources:
+      - path: ClaudeSessions
+    info:
+      path: ClaudeSessions/Info.plist
+      properties:
+        LSUIElement: true
+        CFBundleName: Claude Sessions
+        CFBundleDisplayName: Claude Sessions
+        NSHighResolutionCapable: true
+    settings:
+      base:
+        PRODUCT_NAME: ClaudeSessions
+        PRODUCT_BUNDLE_IDENTIFIER: com.akash.ClaudeSessions
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: NO
+        COMBINE_HIDPI_IMAGES: YES
