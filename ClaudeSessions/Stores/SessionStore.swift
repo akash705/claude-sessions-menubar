@@ -8,11 +8,15 @@ final class SessionStore: ObservableObject {
     @Published var selectedStatuses: Set<SessionStatus> = Set(SessionStatus.allCases)
     @Published var lastRefresh: Date = .distantPast
     @Published var isBlinking: Bool = false
+    /// Toggles every 0.5s while `isBlinking` is true. The label view binds to
+    /// this directly so the icon updates even when the popover is closed.
+    @Published var blinkPhase: Bool = false
 
     private let scanQueue = DispatchQueue(label: "SessionStore.scan", qos: .utility)
     private var watcher: FileWatcher?
     private var tickTimer: Timer?
-    private var blinkTimer: Timer?
+    private var blinkToggleTimer: Timer?
+    private var blinkStopTimer: Timer?
     private var prevStatuses: [String: SessionStatus] = [:]
 
     func start() {
@@ -53,8 +57,10 @@ final class SessionStore: ObservableObject {
         watcher = nil
         tickTimer?.invalidate()
         tickTimer = nil
-        blinkTimer?.invalidate()
-        blinkTimer = nil
+        blinkToggleTimer?.invalidate()
+        blinkToggleTimer = nil
+        blinkStopTimer?.invalidate()
+        blinkStopTimer = nil
     }
 
     func refresh() {
@@ -75,15 +81,21 @@ final class SessionStore: ObservableObject {
     }
 
     func stopBlinking() {
-        blinkTimer?.invalidate()
-        blinkTimer = nil
+        blinkToggleTimer?.invalidate(); blinkToggleTimer = nil
+        blinkStopTimer?.invalidate(); blinkStopTimer = nil
         isBlinking = false
+        blinkPhase = false
     }
 
     private func startBlinking() {
         isBlinking = true
-        blinkTimer?.invalidate()
-        blinkTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+        blinkPhase = false
+        blinkToggleTimer?.invalidate()
+        blinkToggleTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.blinkPhase.toggle() }
+        }
+        blinkStopTimer?.invalidate()
+        blinkStopTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.stopBlinking() }
         }
     }
