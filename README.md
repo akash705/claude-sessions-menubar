@@ -7,23 +7,28 @@ See which sessions are running, which are waiting on you for permission, read me
 ## Features
 
 - **Session list** grouped by project, sorted by last activity.
-- **Status filter pills**: Running · Pending · Idle · Done · Error. Counts update in real time.
+- **Status filter pills**: Running · Pending · Idle · Done · Error. Counts update in real time. *Done* sessions are further scoped by an age picker (Last 1h · 6h · 24h · 3d · 7d).
+- **Cross-session search** — type to filter by project, cwd, preview, or session ID across every tab.
 - **Live message history** — click a row to open a dedicated window that streams new messages as Claude writes them to disk (FS events + 0.5 s polling fallback).
-- **Permission detection** — when Claude requests a tool use that you haven't answered, the session is flagged with an orange `permission` badge and the tool name; the history window shows a prominent banner with one-click actions.
+- **In-menu permission prompts** *(opt-in)* — install the `PreToolUse` hook from the menubar and Claude's tool-use prompts route straight to the app. Approve or deny from the session list or history window; the decision is relayed back to the running `claude` process via a local Unix socket, no terminal focus needed.
+- **Passive permission detection** — even without the hook, the app flags sessions with an orange `permission` badge when the transcript shows an unanswered `tool_use`.
 - **Focus the terminal** hosting a session. For iTerm2 and Terminal.app, the specific tab is selected by TTY. For IDE terminals (Cursor, VSCode, etc.), the correct instance and workspace window is raised via the Accessibility API.
 - **Send a message via the Claude bridge** — if you've run `/remote-control` in a session, a paperplane button opens `https://claude.ai/code/<bridgeSessionId>` in your browser.
+- **Menubar blink** on attention-worthy transitions (session completion, new pending permission) so you notice without checking.
 - **Newest-first history** with user / assistant / tool_use / tool_result / thinking / system entries all rendered with distinct styling.
 - Right-click any row for a quick menu: Open History · Focus Terminal · Send Message · Reveal Transcript in Finder · Copy Session ID.
 
 ## How it works
 
-The app is a **read-only observer** of Claude Code's on-disk state under `~/.claude/`. It never modifies your sessions, sends keystrokes, or talks to the Claude API.
+The app is a **read-only observer** of Claude Code's on-disk state under `~/.claude/` — it never modifies session transcripts, sends keystrokes, or talks to the Claude API. The only files it *writes* are its own hook bridge (`~/.claude/menubar/permission-bridge.sh`, refreshed every launch) and, only if you explicitly click **Install hook**, a single `PreToolUse` entry in `~/.claude/settings.json`.
 
 | Source | Purpose |
 |---|---|
 | `~/.claude/sessions/<pid>.json` | Live-session pointer. Presence + live PID = session is running. Also contains the `bridgeSessionId` when `/remote-control` is active. |
 | `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl` | Full message transcript. Tailed for list preview; read fully for the history window. |
 | `~/.claude/ide/*.lock` | One per connected IDE *window* — lets us match a session's cwd to a specific Cursor/VSCode window for precise focus. |
+| `~/.claude/menubar/permission-bridge.sh` | Small shell bridge written by the app; invoked as a `PreToolUse` hook and forwards the prompt over a Unix socket to the running menubar app. |
+| `~/.claude/settings.json` | The `hooks.PreToolUse` entry is added/removed only when you click Install/Uninstall in the menu — never silently on launch. |
 
 ### Status rules
 
@@ -73,7 +78,8 @@ ClaudeSessions/
 ├── ClaudeSessionsApp.swift          # @main — MenuBarExtra + history WindowGroup
 ├── Models/
 │   ├── Session.swift                # Session struct + Status enum
-│   └── TranscriptEntry.swift        # JSONL line + block decoder
+│   ├── TranscriptEntry.swift        # JSONL line + block decoder
+│   └── PendingPermission.swift      # hook-delivered permission prompt
 ├── Services/
 │   ├── ClaudePaths.swift            # ~/.claude/* URL helpers
 │   ├── LiveSessionIndex.swift       # reads ~/.claude/sessions/*.json
@@ -84,15 +90,26 @@ ClaudeSessions/
 │   ├── ProcessLiveness.swift        # kill(pid, 0)
 │   ├── ProcessTree.swift            # libproc ppid walk, finds host .app
 │   ├── TerminalFocuser.swift        # activate + AppleScript/AX window raise
+│   ├── HookInstaller.swift          # writes bridge script + installs PreToolUse hook
+│   ├── PermissionServer.swift       # Unix-socket server for hook callbacks
 │   └── FileWatcher.swift            # DispatchSource debounced directory watcher
 ├── Stores/
 │   └── SessionStore.swift           # @Published sessions + filter state
 └── Views/
     ├── MenuBarContent.swift         # popover
-    ├── FilterBar.swift              # status pills
+    ├── FilterBar.swift              # status pills + done-age picker + search
     ├── SessionRow.swift             # list row
     └── HistoryWindow.swift          # message history window
 ```
+
+## Packaging a release
+
+```sh
+scripts/build-release.sh 0.1.0
+# → dist/ClaudeSessions-0.1.0.zip
+```
+
+Builds a Release `.app` via `xcodebuild`, ad-hoc-signs it, and zips it with `ditto` (preserves the bundle structure and signature). The artifact is **not notarized** — first launch on another machine requires right-click → Open to bypass Gatekeeper.
 
 ## Caveats / not yet supported
 
