@@ -94,8 +94,9 @@ struct MenuBarContent: View {
 
     private var list: some View {
         let items = store.filteredSessions
+        let others = store.otherTabSearchResults
         return Group {
-            if items.isEmpty {
+            if items.isEmpty && others.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "tray").font(.title2).foregroundStyle(.secondary)
                     Text("No sessions match the current filters.")
@@ -106,32 +107,40 @@ struct MenuBarContent: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(grouped(items), id: \.project) { bucket in
-                            Section {
-                                ForEach(bucket.sessions) { session in
-                                    SessionRow(session: session)
-                                        .onTapGesture { openHistory(for: session.id) }
-                                        .contextMenu { rowMenu(for: session) }
-                                    Divider().padding(.leading, 34)
-                                }
-                            } header: {
-                                HStack {
-                                    Text(bucket.project)
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                        .textCase(.uppercase)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.top, 8)
-                                .padding(.bottom, 2)
-                                .background(.bar)
-                            }
+                            sectionView(header: bucket.project, sessions: bucket.sessions)
+                        }
+                        if !others.isEmpty {
+                            sectionView(header: "Other tabs", sessions: others, accent: true)
                         }
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func sectionView(header: String, sessions: [Session], accent: Bool = false) -> some View {
+        Section {
+            ForEach(sessions) { session in
+                SessionRow(session: session)
+                    .onTapGesture { openHistory(for: session.id) }
+                    .contextMenu { rowMenu(for: session) }
+                Divider().padding(.leading, 34)
+            }
+        } header: {
+            HStack {
+                Text(header)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(accent ? Color.accentColor : .secondary)
+                    .textCase(.uppercase)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
+            .background(.bar)
+        }
     }
 
     private var footer: some View {

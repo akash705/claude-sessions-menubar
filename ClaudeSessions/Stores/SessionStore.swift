@@ -9,6 +9,14 @@ final class SessionStore: ObservableObject {
     @Published var searchText: String = ""
     @Published var lastRefresh: Date = .distantPast
     @Published var isBlinking: Bool = false
+    /// Max age (hours) for `.done` sessions to remain visible. Other statuses
+    /// are unaffected — they're either still alive or actively erroring.
+    @Published var doneMaxAgeHours: Int = {
+        let stored = UserDefaults.standard.integer(forKey: "doneMaxAgeHours")
+        return stored > 0 ? stored : 24
+    }() {
+        didSet { UserDefaults.standard.set(doneMaxAgeHours, forKey: "doneMaxAgeHours") }
+    }
     /// Toggles every 0.5s while `isBlinking` is true. The label view binds to
     /// this directly so the icon updates even when the popover is closed.
     @Published var blinkPhase: Bool = false
@@ -140,21 +148,39 @@ final class SessionStore: ObservableObject {
     // MARK: - Derived views
 
     var filteredSessions: [Session] {
-        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return sessions.filter { s in
-            guard selectedStatuses.contains(s.status) else { return false }
-            if needle.isEmpty { return true }
-            if s.projectLabel.lowercased().contains(needle) { return true }
-            if s.cwd.lowercased().contains(needle) { return true }
-            if s.lastMessagePreview.lowercased().contains(needle) { return true }
-            if s.id.lowercased().contains(needle) { return true }
-            return false
-        }
+        sessions.filter { selectedStatuses.contains($0.status) && passesAgeFilter($0) && matchesSearch($0) }
+    }
+
+    /// Sessions outside the current filter that match the search text. Empty
+    /// when no search is active — search is what makes other tabs visible.
+    var otherTabSearchResults: [Session] {
+        let needle = trimmedNeedle
+        guard !needle.isEmpty else { return [] }
+        return sessions.filter { !selectedStatuses.contains($0.status) && passesAgeFilter($0) && matchesSearch($0) }
+    }
+
+    private func passesAgeFilter(_ s: Session, now: Date = Date()) -> Bool {
+        guard s.status == .done else { return true }
+        return now.timeIntervalSince(s.lastActivity) <= Double(doneMaxAgeHours) * 3600
+    }
+
+    private var trimmedNeedle: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func matchesSearch(_ s: Session) -> Bool {
+        let needle = trimmedNeedle
+        if needle.isEmpty { return true }
+        if s.projectLabel.lowercased().contains(needle) { return true }
+        if s.cwd.lowercased().contains(needle) { return true }
+        if s.lastMessagePreview.lowercased().contains(needle) { return true }
+        if s.id.lowercased().contains(needle) { return true }
+        return false
     }
 
     var counts: [SessionStatus: Int] {
         var dict: [SessionStatus: Int] = [:]
-        for s in sessions { dict[s.status, default: 0] += 1 }
+        for s in sessions where passesAgeFilter(s) { dict[s.status, default: 0] += 1 }
         return dict
     }
 
