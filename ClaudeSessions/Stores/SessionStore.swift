@@ -43,7 +43,7 @@ final class SessionStore: ObservableObject {
             })
         }
 
-        let w = FileWatcher(debounce: 0.5) { [weak self] in
+        let w = FileWatcher(debounce: 0.2) { [weak self] in
             Task { @MainActor in self?.refresh() }
         }
         w.start(urls: all)
@@ -52,7 +52,7 @@ final class SessionStore: ObservableObject {
         // Periodic tick to catch PID-death transitions and idle transitions
         // (filesystem is silent in those cases).
         tickTimer?.invalidate()
-        tickTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+        tickTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
     }
