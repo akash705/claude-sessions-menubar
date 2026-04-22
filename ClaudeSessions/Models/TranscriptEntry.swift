@@ -61,13 +61,6 @@ struct TranscriptEntry: Identifiable, Hashable {
         }
     }
 
-    var endsWithAssistantMessage: Bool { role == "assistant" }
-    var endsWithUserOrToolResult: Bool {
-        if role == "user" { return true }
-        return blocks.contains {
-            if case .toolResult = $0 { return true } else { return false }
-        }
-    }
 }
 
 enum TranscriptDecoder {
