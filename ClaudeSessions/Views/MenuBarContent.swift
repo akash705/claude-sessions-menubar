@@ -45,7 +45,7 @@ struct MenuBarContent: View {
             Divider()
             footer
         }
-        .frame(width: 420, height: 520)
+        .frame(width: 480, height: 520)
     }
 
     private var header: some View {

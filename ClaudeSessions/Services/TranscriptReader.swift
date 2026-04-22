@@ -141,11 +141,26 @@ enum TranscriptReader {
     }
 
     private static func clip(_ s: String, maxChars: Int) -> String {
-        let collapsed = s
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-        if collapsed.count <= maxChars { return collapsed }
-        let idx = collapsed.index(collapsed.startIndex, offsetBy: maxChars)
-        return collapsed[..<idx] + "…"
+        let cleaned = cleanForPreview(s)
+        if cleaned.count <= maxChars { return cleaned }
+        let idx = cleaned.index(cleaned.startIndex, offsetBy: maxChars)
+        return cleaned[..<idx] + "…"
+    }
+
+    /// Strip markdown formatting and protocol XML tags so list previews show
+    /// plain readable text instead of raw syntax.
+    private static func cleanForPreview(_ s: String) -> String {
+        var result = s
+        // Strip XML/protocol tags like <local-command-stdout>...</local-command-stdout>
+        result = result.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        // Strip markdown headers (## Title → Title)
+        result = result.replacingOccurrences(of: "^#{1,6}\\s+", with: "", options: [.regularExpression, .anchorsMatchLines])
+        // Strip bold/italic markers
+        result = result.replacingOccurrences(of: "\\*{1,3}", with: "", options: .regularExpression)
+        result = result.replacingOccurrences(of: "_{1,3}", with: "", options: .regularExpression)
+        // Collapse whitespace / newlines
+        result = result.replacingOccurrences(of: "[\\r\\n]+", with: " ", options: .regularExpression)
+        result = result.replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
