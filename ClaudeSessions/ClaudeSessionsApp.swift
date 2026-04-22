@@ -30,8 +30,8 @@ private struct MenuBarLabel: View {
     var body: some View {
         HStack(spacing: 3) {
             if store.isBlinking {
-                Image(systemName: store.blinkPhase ? "checkmark.circle.fill" : "sparkle")
-                    .foregroundStyle(store.blinkPhase ? Color.green : .primary)
+                Image(systemName: store.blinkPhase ? "exclamationmark.circle.fill" : "sparkle")
+                    .foregroundStyle(store.blinkPhase ? Color.orange : .primary)
             } else {
                 Image(systemName: "sparkle")
             }

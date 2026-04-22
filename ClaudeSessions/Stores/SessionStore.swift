@@ -17,7 +17,12 @@ final class SessionStore: ObservableObject {
     private var tickTimer: Timer?
     private var blinkToggleTimer: Timer?
     private var blinkStopTimer: Timer?
-    private var prevStatuses: [String: SessionStatus] = [:]
+
+    private struct PrevState {
+        let status: SessionStatus
+        let awaitingPermission: Bool
+    }
+    private var prevStates: [String: PrevState] = [:]
 
     func start() {
         refresh()
@@ -68,16 +73,38 @@ final class SessionStore: ObservableObject {
             let list = SessionScanner.scan()
             DispatchQueue.main.async {
                 guard let self else { return }
-                let activeSet: Set<SessionStatus> = [.running, .pending]
-                let justFinished = list.contains { s in
-                    activeSet.contains(self.prevStatuses[s.id] ?? s.status) && s.status == .done
-                }
-                self.prevStatuses = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0.status) })
+                let needsAttention = self.detectAttentionTransition(in: list)
+                self.prevStates = Dictionary(uniqueKeysWithValues: list.map {
+                    ($0.id, PrevState(status: $0.status, awaitingPermission: $0.isAwaitingPermission))
+                })
                 self.sessions = list
                 self.lastRefresh = Date()
-                if justFinished { self.startBlinking() }
+                if needsAttention { self.startBlinking() }
             }
         }
+    }
+
+    /// Returns true when any session has just transitioned to a state that
+    /// likely warrants the user's attention:
+    ///   - agent stopped responding (running → pending)
+    ///   - agent now waiting on permission (awaitingPermission false → true)
+    ///   - error appeared (anything → error)
+    ///   - session ended (active → done)
+    /// First-seen sessions never trigger (we have no prior state to compare).
+    private func detectAttentionTransition(in list: [Session]) -> Bool {
+        let liveStates: Set<SessionStatus> = [.running, .pending, .idle]
+        for s in list {
+            guard let prev = prevStates[s.id] else { continue } // skip first sighting
+            // Agent stopped responding mid-session
+            if prev.status == .running && s.status == .pending { return true }
+            // Just started waiting on the user for permission
+            if !prev.awaitingPermission && s.isAwaitingPermission { return true }
+            // Error newly surfaced
+            if prev.status != .error && s.status == .error { return true }
+            // Session ended
+            if liveStates.contains(prev.status) && s.status == .done { return true }
+        }
+        return false
     }
 
     func stopBlinking() {
