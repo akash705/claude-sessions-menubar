@@ -154,7 +154,10 @@ enum TranscriptReader {
         // Strip XML/protocol tags like <local-command-stdout>...</local-command-stdout>
         result = result.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         // Strip markdown headers (## Title → Title)
-        result = result.replacingOccurrences(of: "^#{1,6}\\s+", with: "", options: [.regularExpression, .anchorsMatchLines])
+        if let regex = try? NSRegularExpression(pattern: "^#{1,6}\\s+", options: .anchorsMatchLines) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: "")
+        }
         // Strip bold/italic markers
         result = result.replacingOccurrences(of: "\\*{1,3}", with: "", options: .regularExpression)
         result = result.replacingOccurrences(of: "_{1,3}", with: "", options: .regularExpression)

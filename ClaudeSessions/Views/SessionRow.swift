@@ -56,7 +56,7 @@ struct SessionRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Focus terminal\(TerminalFocuser.hostAppName(for: session).map { " (\($0))" } ?? "")")
+                .help(session.hostAppName.map { "Focus terminal (\($0))" } ?? "Focus terminal")
                 .padding(.top, 2)
             }
         }

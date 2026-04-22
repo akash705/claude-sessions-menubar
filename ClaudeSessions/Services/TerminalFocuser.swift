@@ -48,8 +48,14 @@ enum TerminalFocuser {
     }
 
     static func hostAppName(for session: Session) -> String? {
-        guard let pid = session.pid,
-              let match = ProcessTree.ancestorApp(of: pid) else { return nil }
+        hostAppName(forPid: session.pid)
+    }
+
+    /// Resolves the hosting `.app` name for a pid. Walks the process tree —
+    /// safe to call off the main thread, but expensive enough that callers
+    /// should cache the result rather than calling per UI render.
+    static func hostAppName(forPid pid: Int?) -> String? {
+        guard let pid, let match = ProcessTree.ancestorApp(of: pid) else { return nil }
         return match.appURL.deletingPathExtension().lastPathComponent
     }
 

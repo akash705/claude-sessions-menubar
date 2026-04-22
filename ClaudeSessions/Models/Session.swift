@@ -38,6 +38,10 @@ struct Session: Identifiable, Hashable {
     let pendingTool: TranscriptReader.PendingTool?
     let permissionMode: String?
     let bridgeSessionId: String?
+    /// Resolved host app (e.g. "Terminal", "Cursor") for live sessions only.
+    /// Computed once on the scan queue and cached, so views never block the
+    /// main thread on process-tree walks.
+    let hostAppName: String?
 
     var bridgeURL: URL? {
         guard let b = bridgeSessionId, !b.isEmpty else { return nil }

@@ -40,6 +40,10 @@ enum SessionScanner {
 
                 let liveRec = live[sessionId]
                 let status = StatusResolver.resolve(summary: summary, live: liveRec, now: now)
+                // Resolve once on the scan queue. Per-render lookups would
+                // shell out to /bin/ps from the main thread (see ProcessTree
+                // fallback) and crash the app under repeated re-renders.
+                let hostAppName = TerminalFocuser.hostAppName(forPid: liveRec?.pid)
 
                 let session = Session(
                     id: sessionId,
@@ -54,7 +58,8 @@ enum SessionScanner {
                     status: status,
                     pendingTool: summary.pendingTool,
                     permissionMode: summary.permissionMode,
-                    bridgeSessionId: liveRec?.bridgeSessionId
+                    bridgeSessionId: liveRec?.bridgeSessionId,
+                    hostAppName: hostAppName
                 )
                 sessions.append(session)
             }

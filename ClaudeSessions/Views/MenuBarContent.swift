@@ -14,8 +14,7 @@ struct MenuBarContent: View {
     private func rowMenu(for session: Session) -> some View {
         Button("Open History") { openHistory(for: session.id) }
         if session.pid != nil {
-            let host = TerminalFocuser.hostAppName(for: session)
-            Button("Focus Terminal" + (host.map { " (\($0))" } ?? "")) {
+            Button("Focus Terminal" + (session.hostAppName.map { " (\($0))" } ?? "")) {
                 TerminalFocuser.focusTerminal(for: session)
             }
         }
