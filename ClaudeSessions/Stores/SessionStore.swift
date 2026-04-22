@@ -21,6 +21,7 @@ final class SessionStore: ObservableObject {
     private struct PrevState {
         let status: SessionStatus
         let awaitingPermission: Bool
+        let lastActivity: Date
     }
     private var prevStates: [String: PrevState] = [:]
 
@@ -75,7 +76,11 @@ final class SessionStore: ObservableObject {
                 guard let self else { return }
                 let needsAttention = self.detectAttentionTransition(in: list)
                 self.prevStates = Dictionary(uniqueKeysWithValues: list.map {
-                    ($0.id, PrevState(status: $0.status, awaitingPermission: $0.isAwaitingPermission))
+                    ($0.id, PrevState(
+                        status: $0.status,
+                        awaitingPermission: $0.isAwaitingPermission,
+                        lastActivity: $0.lastActivity
+                    ))
                 })
                 self.sessions = list
                 self.lastRefresh = Date()
@@ -86,7 +91,7 @@ final class SessionStore: ObservableObject {
 
     /// Returns true when any session has just transitioned to a state that
     /// likely warrants the user's attention:
-    ///   - agent stopped responding (running → pending)
+    ///   - agent finished a reply turn (new assistant entry landed AND no pending tool)
     ///   - agent now waiting on permission (awaitingPermission false → true)
     ///   - error appeared (anything → error)
     ///   - session ended (active → done)
@@ -95,8 +100,12 @@ final class SessionStore: ObservableObject {
         let liveStates: Set<SessionStatus> = [.running, .pending, .idle]
         for s in list {
             guard let prev = prevStates[s.id] else { continue } // skip first sighting
-            // Agent stopped responding mid-session
-            if prev.status == .running && s.status == .pending { return true }
+            // Agent finished a turn: lastActivity advanced AND last entry is an
+            // assistant message (status .running by definition) AND no pending
+            // tool_use. This is the same moment Claude Code's stop hook fires.
+            if s.lastActivity > prev.lastActivity
+                && s.status == .running
+                && s.pendingTool == nil { return true }
             // Just started waiting on the user for permission
             if !prev.awaitingPermission && s.isAwaitingPermission { return true }
             // Error newly surfaced
