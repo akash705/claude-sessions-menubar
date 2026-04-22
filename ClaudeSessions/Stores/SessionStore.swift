@@ -20,12 +20,19 @@ final class SessionStore: ObservableObject {
     /// Toggles every 0.5s while `isBlinking` is true. The label view binds to
     /// this directly so the icon updates even when the popover is closed.
     @Published var blinkPhase: Bool = false
+    /// Permission requests held by the bridge hook, keyed by sessionId.
+    /// Populated when the bridge POSTs to PermissionServer; cleared when the
+    /// user clicks Allow/Deny (and the HTTP response goes back).
+    @Published private(set) var pendingPermissions: [String: PendingPermission] = [:]
 
     private let scanQueue = DispatchQueue(label: "SessionStore.scan", qos: .utility)
     private var watcher: FileWatcher?
     private var tickTimer: Timer?
     private var blinkToggleTimer: Timer?
     private var blinkStopTimer: Timer?
+    private var permissionServer: PermissionServer?
+    /// Resolves the HTTP request blocked on the bridge — keyed by pending id.
+    private var pendingResolvers: [UUID: (PermissionDecision) -> Void] = [:]
 
     private struct PrevState {
         let status: SessionStatus
@@ -65,6 +72,49 @@ final class SessionStore: ObservableObject {
         tickTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
+
+        startPermissionServer()
+    }
+
+    private func startPermissionServer() {
+        // Refresh the bridge script first — keeps the on-disk script in sync
+        // with whatever ships in this build of the app.
+        HookInstaller.writeBridgeScript()
+
+        let server = PermissionServer(
+            handler: { [weak self] pending, resolve in
+                guard let self else { resolve(.deny); return }
+                self.pendingResolvers[pending.id] = resolve
+                self.pendingPermissions[pending.sessionId] = pending
+                self.startBlinking()
+            },
+            onCancel: { [weak self] pendingId in
+                self?.dropPendingPermission(pendingId: pendingId)
+            }
+        )
+        do {
+            try server.start()
+            permissionServer = server
+        } catch {
+            NSLog("[ClaudeSessions] PermissionServer failed to start: \(error)")
+        }
+    }
+
+    func resolvePermission(sessionId: String, decision: PermissionDecision) {
+        guard let pending = pendingPermissions[sessionId],
+              let resolve = pendingResolvers.removeValue(forKey: pending.id) else { return }
+        pendingPermissions.removeValue(forKey: sessionId)
+        resolve(decision)
+    }
+
+    /// Called by PermissionServer when the bridge connection drops before
+    /// the user answered. We just clean up — the bridge has already told
+    /// Claude Code to fall back to the built-in prompt.
+    fileprivate func dropPendingPermission(pendingId: UUID) {
+        pendingResolvers.removeValue(forKey: pendingId)
+        if let sessionId = pendingPermissions.first(where: { $0.value.id == pendingId })?.key {
+            pendingPermissions.removeValue(forKey: sessionId)
+        }
     }
 
     func stop() {
@@ -76,6 +126,14 @@ final class SessionStore: ObservableObject {
         blinkToggleTimer = nil
         blinkStopTimer?.invalidate()
         blinkStopTimer = nil
+        permissionServer?.stop()
+        permissionServer = nil
+        // Anyone still waiting on us must be unblocked, or the hook hangs
+        // until the 600s Claude Code timeout. Hand control back to the
+        // built-in prompt rather than silently allowing or denying.
+        for (_, resolve) in pendingResolvers { resolve(.ask) }
+        pendingResolvers.removeAll()
+        pendingPermissions.removeAll()
     }
 
     func refresh() {

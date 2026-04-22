@@ -2,6 +2,9 @@ import SwiftUI
 
 struct SessionRow: View {
     let session: Session
+    var pendingPermission: PendingPermission? = nil
+    var onAllow: (() -> Void)? = nil
+    var onDeny: (() -> Void)? = nil
 
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
@@ -32,7 +35,24 @@ struct SessionRow: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-                if session.isAwaitingPermission, let t = session.pendingTool {
+                if let pending = pendingPermission {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(pending.summary)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.orange)
+                            .lineLimit(2)
+                        HStack(spacing: 6) {
+                            Button("Allow") { onAllow?() }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.mini)
+                                .tint(.green)
+                            Button("Deny") { onDeny?() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                                .tint(.red)
+                        }
+                    }
+                } else if session.isAwaitingPermission, let t = session.pendingTool {
                     Text("Awaiting permission: \(t.name)")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.orange)

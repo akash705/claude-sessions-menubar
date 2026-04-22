@@ -95,8 +95,14 @@ struct MenuBarContent: View {
     private var list: some View {
         let items = store.filteredSessions
         let others = store.otherTabSearchResults
+        // Pending permission rows surface regardless of the current filter
+        // — otherwise a request on a hidden session would silently time out.
+        let pendingSessions = store.sessions.filter { store.pendingPermissions[$0.id] != nil }
+        let pendingIds = Set(pendingSessions.map(\.id))
+        let mainItems = items.filter { !pendingIds.contains($0.id) }
+        let otherItems = others.filter { !pendingIds.contains($0.id) }
         return Group {
-            if items.isEmpty && others.isEmpty {
+            if pendingSessions.isEmpty && mainItems.isEmpty && otherItems.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "tray").font(.title2).foregroundStyle(.secondary)
                     Text("No sessions match the current filters.")
@@ -106,11 +112,14 @@ struct MenuBarContent: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(grouped(items), id: \.project) { bucket in
+                        if !pendingSessions.isEmpty {
+                            sectionView(header: "Needs attention", sessions: pendingSessions, accent: true)
+                        }
+                        ForEach(grouped(mainItems), id: \.project) { bucket in
                             sectionView(header: bucket.project, sessions: bucket.sessions)
                         }
-                        if !others.isEmpty {
-                            sectionView(header: "Other tabs", sessions: others, accent: true)
+                        if !otherItems.isEmpty {
+                            sectionView(header: "Other tabs", sessions: otherItems, accent: true)
                         }
                     }
                 }
@@ -123,9 +132,14 @@ struct MenuBarContent: View {
     private func sectionView(header: String, sessions: [Session], accent: Bool = false) -> some View {
         Section {
             ForEach(sessions) { session in
-                SessionRow(session: session)
-                    .onTapGesture { openHistory(for: session.id) }
-                    .contextMenu { rowMenu(for: session) }
+                SessionRow(
+                    session: session,
+                    pendingPermission: store.pendingPermissions[session.id],
+                    onAllow: { store.resolvePermission(sessionId: session.id, decision: .allow) },
+                    onDeny: { store.resolvePermission(sessionId: session.id, decision: .deny) }
+                )
+                .onTapGesture { openHistory(for: session.id) }
+                .contextMenu { rowMenu(for: session) }
                 Divider().padding(.leading, 34)
             }
         } header: {
@@ -150,13 +164,46 @@ struct MenuBarContent: View {
             Spacer()
             Text("Updated \(relativeRefresh)")
                 .font(.caption2).foregroundStyle(.secondary)
-            Button("Quit") { NSApp.terminate(nil) }
-                .buttonStyle(.plain)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Menu {
+                if HookInstaller.isHookInstalled() {
+                    Button("Uninstall Permission Hook") {
+                        runHookAction("Uninstall Permission Hook") { try HookInstaller.uninstallHook() }
+                    }
+                } else {
+                    Button("Install Permission Hook") {
+                        runHookAction("Install Permission Hook") { try HookInstaller.installHook() }
+                    }
+                }
+                Divider()
+                Button("Quit") { NSApp.terminate(nil) }
+            } label: {
+                Image(systemName: "gearshape")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    /// Surfaces hook install/uninstall errors (e.g. unparseable settings.json)
+    /// instead of swallowing them — without this the gear menu would just
+    /// silently no-op and leave the user mystified.
+    private func runHookAction(_ title: String, _ action: () throws -> Void) {
+        do {
+            try action()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = title + " failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
     }
 
     private var relativeRefresh: String {

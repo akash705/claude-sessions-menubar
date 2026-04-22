@@ -7,9 +7,12 @@ struct ClaudeSessionsApp: App {
     var body: some Scene {
         MenuBarExtra {
             MenuBarContent(store: store)
-                .onAppear { store.start() }
         } label: {
+            // The label appears immediately at launch; the popover's onAppear
+            // doesn't fire until first click. Starting here ensures the
+            // permission server is up before any tool prompt arrives.
             MenuBarLabel(store: store)
+                .task { store.start() }
         }
         .menuBarExtraStyle(.window)
 
