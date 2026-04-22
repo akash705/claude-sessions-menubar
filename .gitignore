@@ -14,3 +14,7 @@ xcuserdata/
 
 # Xcode user settings
 *.xcuserstate
+
+# Release build outputs (scripts/build-release.sh)
+build/
+dist/
