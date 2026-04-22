@@ -46,6 +46,7 @@ struct MenuBarContent: View {
             footer
         }
         .frame(width: 480, height: 520)
+        .onAppear { store.stopBlinking() }
     }
 
     private var header: some View {

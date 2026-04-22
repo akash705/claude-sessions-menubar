@@ -7,10 +7,13 @@ final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [Session] = []
     @Published var selectedStatuses: Set<SessionStatus> = Set(SessionStatus.allCases)
     @Published var lastRefresh: Date = .distantPast
+    @Published var isBlinking: Bool = false
 
     private let scanQueue = DispatchQueue(label: "SessionStore.scan", qos: .utility)
     private var watcher: FileWatcher?
     private var tickTimer: Timer?
+    private var blinkTimer: Timer?
+    private var prevStatuses: [String: SessionStatus] = [:]
 
     func start() {
         refresh()
@@ -50,15 +53,38 @@ final class SessionStore: ObservableObject {
         watcher = nil
         tickTimer?.invalidate()
         tickTimer = nil
+        blinkTimer?.invalidate()
+        blinkTimer = nil
     }
 
     func refresh() {
         scanQueue.async { [weak self] in
             let list = SessionScanner.scan()
             DispatchQueue.main.async {
-                self?.sessions = list
-                self?.lastRefresh = Date()
+                guard let self else { return }
+                let activeSet: Set<SessionStatus> = [.running, .pending]
+                let justFinished = list.contains { s in
+                    activeSet.contains(self.prevStatuses[s.id] ?? s.status) && s.status == .done
+                }
+                self.prevStatuses = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0.status) })
+                self.sessions = list
+                self.lastRefresh = Date()
+                if justFinished { self.startBlinking() }
             }
+        }
+    }
+
+    func stopBlinking() {
+        blinkTimer?.invalidate()
+        blinkTimer = nil
+        isBlinking = false
+    }
+
+    private func startBlinking() {
+        isBlinking = true
+        blinkTimer?.invalidate()
+        blinkTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.stopBlinking() }
         }
     }
 
