@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [Session] = []
-    @Published var selectedStatuses: Set<SessionStatus> = Set(SessionStatus.allCases)
+    @Published var selectedStatuses: Set<SessionStatus> = [.running]
     @Published var lastRefresh: Date = .distantPast
     @Published var isBlinking: Bool = false
     /// Toggles every 0.5s while `isBlinking` is true. The label view binds to
@@ -148,6 +148,12 @@ final class SessionStore: ObservableObject {
     }
 
     func toggle(_ status: SessionStatus) {
+        // If everything is currently selected, treat the click as "narrow to
+        // just this one" rather than a multi-select removal.
+        if allSelected {
+            selectedStatuses = [status]
+            return
+        }
         if selectedStatuses.contains(status) {
             selectedStatuses.remove(status)
             if selectedStatuses.isEmpty { selectedStatuses = Set(SessionStatus.allCases) }
