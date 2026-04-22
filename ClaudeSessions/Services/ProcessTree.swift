@@ -27,23 +27,23 @@ enum ProcessTree {
         var current = pid
         var targetAppURL: URL?
         var topmostPid: Int?
-        for _ in 0..<maxDepth {
-            guard let info = info(for: current) else { break }
+        for step in 0..<maxDepth {
+            guard let info = info(for: current) else {
+                NSLog("[ClaudeSessions] ancestorApp step=\(step) pid=\(current): info() returned nil")
+                break
+            }
+            NSLog("[ClaudeSessions] ancestorApp step=\(step) pid=\(current) ppid=\(info.ppid.map(String.init) ?? "nil") exec=\(info.executablePath ?? "nil")")
             let thisAppURL = info.executablePath.flatMap(appBundleURL(from:))
             if let thisAppURL = thisAppURL {
                 if targetAppURL == nil {
-                    // First bundle hit — lock in as the target, record this pid.
                     targetAppURL = thisAppURL
                     topmostPid = current
                 } else if thisAppURL == targetAppURL {
-                    // Still inside the same .app — move the "topmost" marker up.
                     topmostPid = current
                 } else {
-                    // Left the target bundle — stop walking.
                     break
                 }
             } else if targetAppURL != nil {
-                // Left the bundle into a shell/script process. Stop walking.
                 break
             }
             guard let ppid = info.ppid, ppid > 1 else { break }
