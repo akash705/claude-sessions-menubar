@@ -16,12 +16,14 @@ targets:
         CFBundleName: Claude Sessions
         CFBundleDisplayName: Claude Sessions
         NSHighResolutionCapable: true
+        NSAppleEventsUsageDescription: "Claude Sessions needs to send Apple Events to Terminal and iTerm2 to focus the tab running your Claude Code session."
     settings:
       base:
         PRODUCT_NAME: ClaudeSessions
         PRODUCT_BUNDLE_IDENTIFIER: com.akash.ClaudeSessions
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: ClaudeSessions/ClaudeSessions.entitlements
         CODE_SIGN_STYLE: Automatic
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: NO

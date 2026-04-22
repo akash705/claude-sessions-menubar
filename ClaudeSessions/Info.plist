@@ -22,6 +22,8 @@
 	<string>1</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Claude Sessions needs to send Apple Events to Terminal and iTerm2 to focus the tab running your Claude Code session.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>
