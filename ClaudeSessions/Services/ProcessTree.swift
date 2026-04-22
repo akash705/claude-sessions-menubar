@@ -79,8 +79,21 @@ enum ProcessTree {
         let rc = withUnsafeMutablePointer(to: &bsd) { ptr -> Int32 in
             proc_pidinfo(Int32(pid), PROC_PIDTBSDINFO, 0, ptr, Int32(MemoryLayout<proc_bsdinfo>.size))
         }
-        let ppid: Int? = rc == Int32(MemoryLayout<proc_bsdinfo>.size) ? Int(bsd.pbi_ppid) : nil
+        var ppid: Int? = rc == Int32(MemoryLayout<proc_bsdinfo>.size) ? Int(bsd.pbi_ppid) : nil
+        // Fallback: macOS restricts proc_pidinfo on setuid-root processes
+        // (e.g. /usr/bin/login), but /bin/ps can still read their ppid.
+        // Without this, the ancestor walk stops at login and never reaches
+        // the hosting Terminal.app.
+        if ppid == nil {
+            ppid = psPpid(for: pid)
+        }
         return ProcInfo(pid: pid, ppid: ppid, executablePath: path)
+    }
+
+    private static func psPpid(for pid: Int) -> Int? {
+        let out = shell("/bin/ps", args: ["-o", "ppid=", "-p", String(pid)])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return Int(out)
     }
 
     /// Returns the *outermost* `.app` bundle URL on the given executable path.
