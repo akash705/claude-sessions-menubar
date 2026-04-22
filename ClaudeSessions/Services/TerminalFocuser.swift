@@ -10,14 +10,21 @@ enum TerminalFocuser {
 
     @discardableResult
     static func focusTerminal(for session: Session) -> Bool {
-        guard let pid = session.pid else { return false }
+        guard let pid = session.pid else {
+            NSLog("[ClaudeSessions] focusTerminal: session has no pid")
+            return false
+        }
         let tty = ProcessTree.tty(of: pid)
 
         // 1. Find the host .app and the *exact* topmost ancestor PID.
-        guard let match = ProcessTree.ancestorApp(of: pid) else { return false }
+        guard let match = ProcessTree.ancestorApp(of: pid) else {
+            NSLog("[ClaudeSessions] focusTerminal: no ancestor app found for pid \(pid)")
+            return false
+        }
         let appURL = match.appURL
         let hostPid = match.pid
         let appName = appURL.deletingPathExtension().lastPathComponent
+        NSLog("[ClaudeSessions] focusTerminal: host=\(appName) hostPid=\(hostPid) tty=\(tty ?? "nil")")
 
         // 2. Activate that specific running instance (not just "any").
         activate(pid: pid_t(hostPid), fallbackAppURL: appURL)
@@ -100,8 +107,13 @@ enum TerminalFocuser {
 
     private static func runAppleScript(_ source: String) {
         var err: NSDictionary?
-        if let script = NSAppleScript(source: source) {
-            _ = script.executeAndReturnError(&err)
+        guard let script = NSAppleScript(source: source) else {
+            NSLog("[ClaudeSessions] AppleScript failed to compile")
+            return
+        }
+        _ = script.executeAndReturnError(&err)
+        if let err {
+            NSLog("[ClaudeSessions] AppleScript error: \(err)")
         }
     }
 

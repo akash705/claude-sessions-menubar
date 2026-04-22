@@ -39,14 +39,38 @@ struct MenuBarContent: View {
         VStack(spacing: 0) {
             header
             Divider()
+            searchBar
+            Divider()
             FilterBar(store: store)
             Divider()
             list
             Divider()
             footer
         }
-        .frame(width: 480, height: 520)
+        .frame(width: 480, height: 560)
         .onAppear { store.stopBlinking() }
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Search by project, path, message…", text: $store.searchText)
+                .textFieldStyle(.plain)
+                .font(.callout)
+            if !store.searchText.isEmpty {
+                Button {
+                    store.searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 
     private var header: some View {
@@ -85,13 +109,9 @@ struct MenuBarContent: View {
                         ForEach(grouped(items), id: \.project) { bucket in
                             Section {
                                 ForEach(bucket.sessions) { session in
-                                    Button {
-                                        openHistory(for: session.id)
-                                    } label: {
-                                        SessionRow(session: session)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contextMenu { rowMenu(for: session) }
+                                    SessionRow(session: session)
+                                        .onTapGesture { openHistory(for: session.id) }
+                                        .contextMenu { rowMenu(for: session) }
                                     Divider().padding(.leading, 34)
                                 }
                             } header: {

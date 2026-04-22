@@ -6,6 +6,7 @@ import SwiftUI
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [Session] = []
     @Published var selectedStatuses: Set<SessionStatus> = [.running]
+    @Published var searchText: String = ""
     @Published var lastRefresh: Date = .distantPast
     @Published var isBlinking: Bool = false
     /// Toggles every 0.5s while `isBlinking` is true. The label view binds to
@@ -139,7 +140,16 @@ final class SessionStore: ObservableObject {
     // MARK: - Derived views
 
     var filteredSessions: [Session] {
-        sessions.filter { selectedStatuses.contains($0.status) }
+        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return sessions.filter { s in
+            guard selectedStatuses.contains(s.status) else { return false }
+            if needle.isEmpty { return true }
+            if s.projectLabel.lowercased().contains(needle) { return true }
+            if s.cwd.lowercased().contains(needle) { return true }
+            if s.lastMessagePreview.lowercased().contains(needle) { return true }
+            if s.id.lowercased().contains(needle) { return true }
+            return false
+        }
     }
 
     var counts: [SessionStatus: Int] {

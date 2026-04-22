@@ -44,6 +44,21 @@ struct SessionRow: View {
                         .lineLimit(2)
                 }
             }
+
+            if session.pid != nil {
+                Button {
+                    TerminalFocuser.focusTerminal(for: session)
+                } label: {
+                    Image(systemName: "terminal")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Focus terminal\(TerminalFocuser.hostAppName(for: session).map { " (\($0))" } ?? "")")
+                .padding(.top, 2)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
