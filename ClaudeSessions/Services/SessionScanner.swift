@@ -39,7 +39,7 @@ enum SessionScanner {
                 guard let summary = TranscriptReader.summarize(url: file) else { continue }
 
                 let liveRec = live[sessionId]
-                let status = StatusResolver.resolve(summary: summary, live: liveRec, now: now)
+                let status = StatusResolver.resolve(summary: summary, live: liveRec, fileMTime: mtime, now: now)
                 // Resolve once on the scan queue. Per-render lookups would
                 // shell out to /bin/ps from the main thread (see ProcessTree
                 // fallback) and crash the app under repeated re-renders.

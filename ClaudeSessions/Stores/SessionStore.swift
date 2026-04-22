@@ -5,7 +5,11 @@ import SwiftUI
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [Session] = []
-    @Published var selectedStatuses: Set<SessionStatus> = [.running]
+    @Published var selectedStatuses: Set<SessionStatus> = [.running, .pending, .idle]
+
+    /// Statuses grouped under the single "Active" filter pill — all three
+    /// share a live PID, so users almost always want them together.
+    static let activeGroup: Set<SessionStatus> = [.running, .pending, .idle]
     @Published var searchText: String = ""
     @Published var lastRefresh: Date = .distantPast
     @Published var isBlinking: Bool = false
@@ -267,4 +271,28 @@ final class SessionStore: ObservableObject {
 
     func setAll() { selectedStatuses = Set(SessionStatus.allCases) }
     var allSelected: Bool { selectedStatuses.count == SessionStatus.allCases.count }
+
+    var activeGroupSelected: Bool {
+        Self.activeGroup.isSubset(of: selectedStatuses)
+    }
+
+    /// Toggles Running, Pending, and Idle together. If `allSelected`, narrows
+    /// to just the active group — mirrors `toggle(_:)`'s "narrow-on-first-click"
+    /// behavior so the user isn't forced to toggle everything else off manually.
+    func toggleActiveGroup() {
+        if allSelected {
+            selectedStatuses = Self.activeGroup
+            return
+        }
+        if activeGroupSelected {
+            selectedStatuses.subtract(Self.activeGroup)
+            if selectedStatuses.isEmpty { selectedStatuses = Set(SessionStatus.allCases) }
+        } else {
+            selectedStatuses.formUnion(Self.activeGroup)
+        }
+    }
+
+    var activeGroupCount: Int {
+        Self.activeGroup.reduce(0) { $0 + (counts[$1] ?? 0) }
+    }
 }

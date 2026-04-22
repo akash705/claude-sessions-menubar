@@ -19,12 +19,19 @@ struct FilterBar: View {
     var body: some View {
         HStack(spacing: 6) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     AllPill(active: store.allSelected) { store.setAll() }
-                    ForEach(SessionStatus.allCases, id: \.self) { status in
-                        Pill(
+                    DotPill(
+                        label: "Active",
+                        count: store.activeGroupCount,
+                        isOn: store.activeGroupSelected,
+                        color: .green
+                    ) {
+                        store.toggleActiveGroup()
+                    }
+                    ForEach([SessionStatus.done, SessionStatus.error], id: \.self) { status in
+                        DotPill(
                             label: status.label,
-                            symbol: status.symbol,
                             count: store.counts[status] ?? 0,
                             isOn: store.selectedStatuses.contains(status),
                             color: color(for: status)
@@ -44,16 +51,17 @@ struct FilterBar: View {
                 }
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: "clock").font(.caption2)
-                    Text(currentAgeLabel).font(.caption.weight(.medium))
+                    Image(systemName: "clock")
+                        .font(.system(size: 10))
+                    Text(currentAgeLabel)
+                        .font(.system(size: 11, weight: .medium))
                 }
                 .lineLimit(1)
                 .fixedSize()
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.gray.opacity(0.12))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
                 .foregroundStyle(.secondary)
-                .clipShape(Capsule())
+                .background(Capsule().fill(Color.primary.opacity(0.06)))
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -61,7 +69,7 @@ struct FilterBar: View {
             .help("Hide done sessions older than this")
             .padding(.trailing, 10)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
     }
 
     private func color(for status: SessionStatus) -> Color {
@@ -81,22 +89,26 @@ private struct AllPill: View {
     var body: some View {
         Button(action: action) {
             Text("All")
-                .font(.caption.weight(.medium))
+                .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
                 .fixedSize()
                 .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(active ? Color.accentColor.opacity(0.18) : Color.gray.opacity(0.12))
+                .padding(.vertical, 4)
+                .background(
+                    Capsule().fill(
+                        active
+                            ? Color.accentColor.opacity(0.18)
+                            : Color.primary.opacity(0.06)
+                    )
+                )
                 .foregroundStyle(active ? Color.accentColor : .secondary)
-                .clipShape(Capsule())
         }
         .buttonStyle(.plain)
     }
 }
 
-private struct Pill: View {
+private struct DotPill: View {
     let label: String
-    let symbol: String
     let count: Int
     let isOn: Bool
     let color: Color
@@ -104,22 +116,28 @@ private struct Pill: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: symbol)
-                    .font(.caption2)
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 6, height: 6)
                 Text(label)
-                    .font(.caption.weight(.medium))
+                    .font(.system(size: 11, weight: .medium))
                 Text("\(count)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(.tertiary)
             }
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(isOn ? color.opacity(0.18) : Color.gray.opacity(0.10))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(
+                Capsule().fill(
+                    isOn
+                        ? color.opacity(0.16)
+                        : Color.primary.opacity(0.04)
+                )
+            )
             .foregroundStyle(isOn ? color : .secondary)
-            .clipShape(Capsule())
         }
         .buttonStyle(.plain)
         .opacity(count == 0 ? 0.55 : 1.0)

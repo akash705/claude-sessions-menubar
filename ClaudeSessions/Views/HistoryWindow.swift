@@ -100,9 +100,15 @@ struct HistoryWindow: View {
                         }
                         .padding(12)
                     }
-                    .onChange(of: entries.count) { _, _ in
+                    .onChange(of: sortedEntries.first?.id) { _, newId in
+                        guard let id = newId else { return }
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            proxy.scrollTo(id, anchor: .top)
+                        }
+                    }
+                    .onAppear {
                         if let first = sortedEntries.first {
-                            withAnimation { proxy.scrollTo(first.id, anchor: .top) }
+                            proxy.scrollTo(first.id, anchor: .top)
                         }
                     }
                 }
@@ -111,15 +117,11 @@ struct HistoryWindow: View {
     }
 
     private var sortedEntries: [TranscriptEntry] {
-        // Newest first. Stable fallback to file order when timestamps tie/missing.
-        let indexed = entries.enumerated().map { (idx, e) in (idx, e) }
-        let sorted = indexed.sorted { lhs, rhs in
-            let lt = lhs.1.timestamp ?? .distantPast
-            let rt = rhs.1.timestamp ?? .distantPast
-            if lt != rt { return lt > rt }
-            return lhs.0 > rhs.0
-        }
-        return sorted.map { $0.1 }
+        // JSONL is append-only chronological — file order is authoritative.
+        // Sorting by `timestamp` instead put entries with nil/unparseable
+        // timestamps at the bottom, so fresh messages missing a timestamp
+        // would vanish from the top of the window.
+        Array(entries.reversed())
     }
 
     private func start() {
@@ -139,10 +141,11 @@ struct HistoryWindow: View {
         self.watcher = w
 
         // Polling fallback — catches cases where FS events don't fire reliably
-        // (e.g. writes from another volume or certain editors). 500 ms is
-        // comfortable for streaming output without being wasteful.
+        // (e.g. writes from another volume or certain editors). 200 ms gives a
+        // snappy streaming feel; the mtime/size check below makes this cheap
+        // when nothing has actually changed.
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
             Task { @MainActor in self.reload(url: url, force: false) }
         }
     }

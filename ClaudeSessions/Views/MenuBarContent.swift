@@ -10,14 +10,25 @@ struct MenuBarContent: View {
         openWindow(id: "history", value: sessionId)
     }
 
+    /// Row-tap default: focus the session's terminal if it's alive, otherwise
+    /// fall back to opening history — a done/stopped session has no terminal
+    /// left to focus, so history is the only useful action.
+    private func primaryTap(on session: Session) {
+        if session.pid != nil {
+            TerminalFocuser.focusTerminal(for: session)
+        } else {
+            openHistory(for: session.id)
+        }
+    }
+
     @ViewBuilder
     private func rowMenu(for session: Session) -> some View {
-        Button("Open History") { openHistory(for: session.id) }
         if session.pid != nil {
             Button("Focus Terminal" + (session.hostAppName.map { " (\($0))" } ?? "")) {
                 TerminalFocuser.focusTerminal(for: session)
             }
         }
+        Button("Open History") { openHistory(for: session.id) }
         if let url = session.bridgeURL {
             Button("Send Message (open bridge)") {
                 NSWorkspace.shared.open(url)
@@ -37,13 +48,9 @@ struct MenuBarContent: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             searchBar
-            Divider()
             FilterBar(store: store)
-            Divider()
             list
-            Divider()
             footer
         }
         .frame(width: 480, height: 560)
@@ -53,43 +60,59 @@ struct MenuBarContent: View {
     private var searchBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
             TextField("Search by project, path, message…", text: $store.searchText)
                 .textFieldStyle(.plain)
-                .font(.callout)
+                .font(.system(size: 12))
             if !store.searchText.isEmpty {
                 Button {
                     store.searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+        )
+        .padding(.horizontal, 10)
+        .padding(.top, 2)
+        .padding(.bottom, 4)
     }
 
     private var header: some View {
         HStack {
             Image(systemName: "sparkle")
+                .font(.system(size: 13))
                 .foregroundStyle(.tint)
             Text("Claude Code Sessions")
-                .font(.headline)
+                .font(.system(size: 13, weight: .semibold))
             Spacer()
             Button {
                 store.refresh()
             } label: {
                 Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.primary.opacity(0.04))
+                    )
             }
             .buttonStyle(.plain)
             .help("Refresh")
         }
         .padding(.horizontal, 12)
-        .padding(.top, 10)
-        .padding(.bottom, 6)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
     }
 
     private var list: some View {
@@ -103,15 +126,18 @@ struct MenuBarContent: View {
         let otherItems = others.filter { !pendingIds.contains($0.id) }
         return Group {
             if pendingSessions.isEmpty && mainItems.isEmpty && otherItems.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "tray").font(.title2).foregroundStyle(.secondary)
+                VStack(spacing: 8) {
+                    Image(systemName: "tray")
+                        .font(.title2)
+                        .foregroundStyle(.tertiary)
                     Text("No sessions match the current filters.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                         if !pendingSessions.isEmpty {
                             sectionView(header: "Needs attention", sessions: pendingSessions, accent: true)
                         }
@@ -121,6 +147,7 @@ struct MenuBarContent: View {
                         if !otherItems.isEmpty {
                             sectionView(header: "Other tabs", sessions: otherItems, accent: true)
                         }
+                        Color.clear.frame(height: 6)
                     }
                 }
             }
@@ -136,23 +163,24 @@ struct MenuBarContent: View {
                     session: session,
                     pendingPermission: store.pendingPermissions[session.id],
                     onAllow: { store.resolvePermission(sessionId: session.id, decision: .allow) },
-                    onDeny: { store.resolvePermission(sessionId: session.id, decision: .deny) }
+                    onDeny: { store.resolvePermission(sessionId: session.id, decision: .deny) },
+                    onOpenHistory: { openHistory(for: session.id) }
                 )
-                .onTapGesture { openHistory(for: session.id) }
+                .onTapGesture { primaryTap(on: session) }
                 .contextMenu { rowMenu(for: session) }
-                Divider().padding(.leading, 34)
             }
         } header: {
             HStack {
                 Text(header)
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.0)
                     .foregroundStyle(accent ? Color.accentColor : .secondary)
                     .textCase(.uppercase)
                 Spacer()
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 2)
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
             .background(.bar)
         }
     }
@@ -160,10 +188,16 @@ struct MenuBarContent: View {
     private var footer: some View {
         HStack {
             Text("\(store.sessions.count) tracked")
-                .font(.caption2).foregroundStyle(.secondary)
+                .font(.system(size: 10, weight: .medium))
+                .tracking(0.8)
+                .textCase(.uppercase)
+                .foregroundStyle(.tertiary)
             Spacer()
             Text("Updated \(relativeRefresh)")
-                .font(.caption2).foregroundStyle(.secondary)
+                .font(.system(size: 10, weight: .medium))
+                .tracking(0.8)
+                .textCase(.uppercase)
+                .foregroundStyle(.tertiary)
             Menu {
                 if HookInstaller.isHookInstalled() {
                     Button("Uninstall Permission Hook") {
@@ -178,15 +212,16 @@ struct MenuBarContent: View {
                 Button("Quit") { NSApp.terminate(nil) }
             } label: {
                 Image(systemName: "gearshape")
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .font(.caption)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.bar)
     }
 
     /// Surfaces hook install/uninstall errors (e.g. unparseable settings.json)
