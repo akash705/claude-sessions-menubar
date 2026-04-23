@@ -145,7 +145,7 @@ final class SessionStore: ObservableObject {
                 }
             },
             onCancel: { [weak self] pendingId in
-                self?.dropPendingPermission(pendingId: pendingId)
+                self?.expireOrDropPendingPermission(pendingId: pendingId)
             },
             onStop: { [weak self] _ in
                 // Claude just finished a turn. Surface the main panel +
@@ -193,8 +193,29 @@ final class SessionStore: ObservableObject {
     }
 
     /// Called by PermissionServer when the bridge connection drops before
-    /// the user answered. We just clean up — the bridge has already told
-    /// Claude Code to fall back to the built-in prompt.
+    /// the user answered. If the card was interactive (a resolver was
+    /// parked), we don't yank it — the user might still be looking at it.
+    /// Instead we mark it `expired` so the UI swaps to the informational
+    /// "answer in terminal" variant, then schedule the same 30s
+    /// auto-dismissal that OFF-mode cards use. If there's no resolver, the
+    /// card was already informational, so we just drop it.
+    private func expireOrDropPendingPermission(pendingId: UUID) {
+        guard pendingResolvers.removeValue(forKey: pendingId) != nil,
+              let sessionId = pendingPermissions.first(where: { $0.value.id == pendingId })?.key,
+              var pending = pendingPermissions[sessionId]
+        else {
+            dropPendingPermission(pendingId: pendingId)
+            return
+        }
+        pending.expired = true
+        pendingPermissions[sessionId] = pending
+        scheduleInformationalDismissal(pendingId: pendingId)
+    }
+
+    /// Called when we're certain the card is dead — bridge gone AND we're
+    /// past the informational grace period (or it was informational from
+    /// the start). The bridge has already told Claude Code to fall back to
+    /// the built-in prompt, so there's no resolver to call.
     fileprivate func dropPendingPermission(pendingId: UUID) {
         pendingResolvers.removeValue(forKey: pendingId)
         if let sessionId = pendingPermissions.first(where: { $0.value.id == pendingId })?.key {

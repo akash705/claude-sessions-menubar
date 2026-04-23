@@ -214,17 +214,20 @@ struct MenuBarContentBody: View {
     private func sectionView(header: String, sessions: [Session], accent: Bool = false) -> some View {
         Section {
             ForEach(sessions) { session in
+                let pending = store.pendingPermissions[session.id]
+                // Wire Allow/Deny only when the in-app decision is on AND the
+                // bridge is still alive. Once the card has expired (bridge
+                // curl timed out, Claude Code fell back to the terminal),
+                // the buttons can't reach anyone — leave them unwired so
+                // SessionRow shows the "answer in terminal" variant.
+                let interactive = store.showPermissionButtons && !(pending?.expired ?? false)
                 SessionRow(
                     session: session,
-                    pendingPermission: store.pendingPermissions[session.id],
-                    // When the user has disabled "Decide in App", leave
-                    // Allow/Deny unwired — SessionRow renders the card in
-                    // informational mode and defers the decision to Claude's
-                    // terminal prompt.
-                    onAllow: store.showPermissionButtons
+                    pendingPermission: pending,
+                    onAllow: interactive
                         ? { store.resolvePermission(sessionId: session.id, decision: .allow) }
                         : nil,
-                    onDeny: store.showPermissionButtons
+                    onDeny: interactive
                         ? { store.resolvePermission(sessionId: session.id, decision: .deny) }
                         : nil,
                     onOpenHistory: { openHistory(session.id) },

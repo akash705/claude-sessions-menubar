@@ -11,6 +11,11 @@ struct PendingPermission: Identifiable, Equatable {
     /// Raw `tool_input` JSON object (already decoded into Foundation types).
     let toolInput: [String: Any]
     let receivedAt: Date
+    /// Set when the bridge connection has gone away (curl --max-time fired and
+    /// Claude Code has fallen back to its own terminal prompt). The card stays
+    /// visible as a hint to "answer in terminal" but its Allow/Deny buttons
+    /// would no longer reach anyone, so the UI hides them.
+    var expired: Bool = false
 
     static func == (lhs: PendingPermission, rhs: PendingPermission) -> Bool {
         lhs.id == rhs.id

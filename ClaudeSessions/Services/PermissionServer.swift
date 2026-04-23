@@ -178,7 +178,7 @@ final class PermissionServer: @unchecked Sendable {
         // NWConnection doesn't reliably transition to .failed/.cancelled on a
         // remote half-close while we're neither reading nor writing, so once
         // the bridge's curl times out we'd otherwise leave the card pinned in
-        // the UI forever. Expire slightly past the bridge's CURL_TIMEOUT (90s)
+        // the UI forever. Expire slightly past the bridge's CURL_TIMEOUT (30s)
         // — by then Claude Code has already fallen back to its own prompt.
         let timeoutWork = DispatchWorkItem { [weak self] in
             lock.lock()
@@ -223,7 +223,7 @@ final class PermissionServer: @unchecked Sendable {
             }
         }
 
-        queue.asyncAfter(deadline: .now() + 95, execute: timeoutWork)
+        queue.asyncAfter(deadline: .now() + 32, execute: timeoutWork)
 
         Task { @MainActor in
             self.handler(pending) { decision in

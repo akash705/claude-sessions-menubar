@@ -216,7 +216,7 @@ enum HookInstaller {
     set -u
 
     PORT_FILE="$HOME/.claude/menubar/port"
-    PERMISSION_TIMEOUT=90
+    PERMISSION_TIMEOUT=30
     STOP_TIMEOUT=5
 
     PAYLOAD=$(cat)
