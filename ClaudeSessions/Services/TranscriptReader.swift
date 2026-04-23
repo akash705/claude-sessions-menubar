@@ -75,6 +75,11 @@ enum TranscriptReader {
         let pendingTool: PendingTool?
         /// Last-seen permission mode ("plan", "default", "acceptEdits", etc.), if any.
         let permissionMode: String?
+        /// Authoritative cwd as recorded in the transcript. Preferred over the
+        /// decoded project dir name, since Claude Code's "/" → "-" encoding is
+        /// lossy for paths that contain dashes (e.g. "piano-practice" would
+        /// decode to "piano/practice").
+        let cwd: String?
     }
 
     struct PendingTool: Hashable {
@@ -100,6 +105,7 @@ enum TranscriptReader {
         let recentError = entries.contains(where: { $0.hasError })
         let pendingTool = computePendingTool(entries: entries)
         let permissionMode = latestPermissionMode(entries: entries)
+        let cwd = latestCwd(entries: entries)
 
         return Summary(
             lastActivity: lastActivity,
@@ -107,8 +113,19 @@ enum TranscriptReader {
             lastEntry: last,
             recentError: recentError,
             pendingTool: pendingTool,
-            permissionMode: permissionMode
+            permissionMode: permissionMode,
+            cwd: cwd
         )
+    }
+
+    private static func latestCwd(entries: [TranscriptEntry]) -> String? {
+        for e in entries.reversed() {
+            guard let data = e.rawLine.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let cwd = obj["cwd"] as? String, !cwd.isEmpty else { continue }
+            return cwd
+        }
+        return nil
     }
 
     /// Walks the tail: collects every tool_use_id, removes those with a matching

@@ -49,7 +49,7 @@ enum SessionScanner {
                     id: sessionId,
                     projectDirName: projectDirName,
                     projectPath: decodedProjectPath,
-                    cwd: liveRec?.cwd ?? decodedProjectPath,
+                    cwd: liveRec?.cwd ?? summary.cwd ?? decodedProjectPath,
                     transcriptPath: file,
                     pid: liveRec?.pid,
                     startedAt: liveRec?.startedAt,

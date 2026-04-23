@@ -6,6 +6,10 @@ struct SessionRow: View {
     var onAllow: (() -> Void)? = nil
     var onDeny: (() -> Void)? = nil
     var onOpenHistory: (() -> Void)? = nil
+    /// Called when the user taps the permission card anywhere outside the
+    /// Allow/Deny buttons — lets them hop to the terminal to inspect/answer
+    /// in context rather than deciding blind from the menubar.
+    var onFocusTerminal: (() -> Void)? = nil
 
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
@@ -70,11 +74,13 @@ struct SessionRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerCursor()
             .help("Open chat history")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
+        .pointerCursor()
     }
 
     private var permissionCard: some View {
@@ -108,8 +114,10 @@ struct SessionRow: View {
             HStack(spacing: 8) {
                 Button("Allow") { onAllow?() }
                     .buttonStyle(PillActionStyle(tint: .green, prominent: true))
+                    .pointerCursor()
                 Button("Deny") { onDeny?() }
                     .buttonStyle(PillActionStyle(tint: .red, prominent: false))
+                    .pointerCursor()
             }
         }
         .padding(12)
@@ -121,6 +129,11 @@ struct SessionRow: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.28), lineWidth: 1)
         )
+        // Make the card tappable as a whole; the Allow/Deny Buttons above
+        // capture their own taps, so only the surrounding area routes here.
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onTapGesture { onFocusTerminal?() }
+        .pointerCursor()
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
     }

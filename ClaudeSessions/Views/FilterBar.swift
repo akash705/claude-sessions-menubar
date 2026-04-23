@@ -104,6 +104,7 @@ private struct AllPill: View {
                 .foregroundStyle(active ? Color.accentColor : .secondary)
         }
         .buttonStyle(.plain)
+        .pointerCursor()
     }
 }
 
@@ -140,6 +141,7 @@ private struct DotPill: View {
             .foregroundStyle(isOn ? color : .secondary)
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .opacity(count == 0 ? 0.55 : 1.0)
     }
 }

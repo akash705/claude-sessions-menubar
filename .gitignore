@@ -18,3 +18,6 @@ xcuserdata/
 # Release build outputs (scripts/build-release.sh)
 build/
 dist/
+
+# Claude Code per-project state
+.claude/

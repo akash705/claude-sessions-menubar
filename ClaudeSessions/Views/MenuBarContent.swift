@@ -1,13 +1,64 @@
 import SwiftUI
 import AppKit
 
+/// Popover shim — owns the environment-bound `openWindow` action and the
+/// fixed 480×560 frame the MenuBarExtra expects. All real UI lives in
+/// `MenuBarContentBody` so the floating panel can reuse it.
 struct MenuBarContent: View {
     @ObservedObject var store: SessionStore
     @Environment(\.openWindow) private var openWindow
 
-    private func openHistory(for sessionId: String) {
-        NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: "history", value: sessionId)
+    var body: some View {
+        MenuBarContentBody(
+            store: store,
+            openHistory: { id in
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "history", value: id)
+            },
+            headerTrailing: {
+                AnyView(
+                    Button {
+                        // Capture the popover's host window *before* the
+                        // toggle so we close the popover specifically,
+                        // not whatever is key after the panel appears.
+                        // The floating panel is non-activating and won't
+                        // become key, so this reliably targets the popover.
+                        let popoverWindow = NSApp.keyWindow
+                        store.toggleFloatingPanel()
+                        popoverWindow?.close()
+                    } label: {
+                        Image(systemName: store.isFloatingPanelOpen ? "pip.exit" : "rectangle.on.rectangle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 22)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Color.primary.opacity(0.04))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .help(store.isFloatingPanelOpen ? "Close floating panel" : "Pop out floating panel")
+                )
+            }
+        )
+        .frame(width: 480, height: 560)
+    }
+}
+
+struct MenuBarContentBody: View {
+    @ObservedObject var store: SessionStore
+    let openHistory: (String) -> Void
+    let headerTrailing: (() -> AnyView)?
+
+    init(
+        store: SessionStore,
+        openHistory: @escaping (String) -> Void,
+        headerTrailing: (() -> AnyView)? = nil
+    ) {
+        self.store = store
+        self.openHistory = openHistory
+        self.headerTrailing = headerTrailing
     }
 
     /// Row-tap default: focus the session's terminal if it's alive, otherwise
@@ -17,7 +68,7 @@ struct MenuBarContent: View {
         if session.pid != nil {
             TerminalFocuser.focusTerminal(for: session)
         } else {
-            openHistory(for: session.id)
+            openHistory(session.id)
         }
     }
 
@@ -28,7 +79,7 @@ struct MenuBarContent: View {
                 TerminalFocuser.focusTerminal(for: session)
             }
         }
-        Button("Open History") { openHistory(for: session.id) }
+        Button("Open History") { openHistory(session.id) }
         if let url = session.bridgeURL {
             Button("Send Message (open bridge)") {
                 NSWorkspace.shared.open(url)
@@ -53,7 +104,6 @@ struct MenuBarContent: View {
             list
             footer
         }
-        .frame(width: 480, height: 560)
         .onAppear { store.stopBlinking() }
     }
 
@@ -74,6 +124,7 @@ struct MenuBarContent: View {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
             }
         }
         .padding(.horizontal, 10)
@@ -95,6 +146,9 @@ struct MenuBarContent: View {
             Text("Claude Code Sessions")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
+            if let trailing = headerTrailing {
+                trailing()
+            }
             Button {
                 store.refresh()
             } label: {
@@ -108,6 +162,7 @@ struct MenuBarContent: View {
                     )
             }
             .buttonStyle(.plain)
+            .pointerCursor()
             .help("Refresh")
         }
         .padding(.horizontal, 12)
@@ -164,7 +219,8 @@ struct MenuBarContent: View {
                     pendingPermission: store.pendingPermissions[session.id],
                     onAllow: { store.resolvePermission(sessionId: session.id, decision: .allow) },
                     onDeny: { store.resolvePermission(sessionId: session.id, decision: .deny) },
-                    onOpenHistory: { openHistory(for: session.id) }
+                    onOpenHistory: { openHistory(session.id) },
+                    onFocusTerminal: { TerminalFocuser.focusTerminal(for: session) }
                 )
                 .onTapGesture { primaryTap(on: session) }
                 .contextMenu { rowMenu(for: session) }

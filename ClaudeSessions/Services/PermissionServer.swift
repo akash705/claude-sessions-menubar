@@ -22,15 +22,25 @@ final class PermissionServer: @unchecked Sendable {
     /// instead of leaving a stale "needs attention" row.
     typealias CancelHandler = @MainActor (_ pendingId: UUID) -> Void
 
+    /// Fired when Claude's `Stop` hook pings us — an agent just finished a
+    /// turn. Fire-and-forget; no response is expected from the handler.
+    typealias StopHandler = @MainActor (_ sessionId: String) -> Void
+
     private let queue = DispatchQueue(label: "PermissionServer", qos: .userInitiated)
     private var listener: NWListener?
     private let handler: RequestHandler
     private let onCancel: CancelHandler
+    private let onStop: StopHandler
     private(set) var port: UInt16 = 0
 
-    init(handler: @escaping RequestHandler, onCancel: @escaping CancelHandler) {
+    init(
+        handler: @escaping RequestHandler,
+        onCancel: @escaping CancelHandler,
+        onStop: @escaping StopHandler
+    ) {
         self.handler = handler
         self.onCancel = onCancel
+        self.onStop = onStop
     }
 
     func start() throws {
@@ -106,10 +116,30 @@ final class PermissionServer: @unchecked Sendable {
         // Request line: "POST /permission HTTP/1.1"
         let firstLine = headerText.split(separator: "\r\n").first.map(String.init) ?? ""
         let parts = firstLine.split(separator: " ").map(String.init)
-        guard parts.count >= 2, parts[0] == "POST", parts[1] == "/permission" else {
+        guard parts.count >= 2, parts[0] == "POST" else {
             self.respond(conn: conn, status: "404 Not Found", body: Data())
             return
         }
+
+        switch parts[1] {
+        case "/permission":
+            handlePermissionRequest(body: body, conn: conn)
+        case "/stop":
+            handleStopRequest(body: body, conn: conn)
+        default:
+            self.respond(conn: conn, status: "404 Not Found", body: Data())
+        }
+    }
+
+    /// Fire-and-forget: respond `{}` fast so the bridge curl exits promptly
+    /// and Claude never blocks on turn-end, then surface the panel.
+    private func handleStopRequest(body: Data, conn: NWConnection) {
+        let sessionId = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["session_id"] as? String ?? ""
+        respond(conn: conn, status: "200 OK", body: Data("{}".utf8))
+        Task { @MainActor [weak self] in self?.onStop(sessionId) }
+    }
+
+    private func handlePermissionRequest(body: Data, conn: NWConnection) {
         guard
             let payload = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
             let toolName = payload["tool_name"] as? String,
@@ -117,6 +147,17 @@ final class PermissionServer: @unchecked Sendable {
             let toolInput = payload["tool_input"] as? [String: Any]
         else {
             self.respond(conn: conn, status: "400 Bad Request", body: Data())
+            return
+        }
+
+        // Honor ~/.claude/settings.json permissions.allow / deny so rules the
+        // user already approved don't re-prompt via our menubar. Our hook
+        // fires before Claude Code's own rule check, so without this every
+        // allow-ed call would still pop a card.
+        if let auto = PermissionRuleMatcher.decision(forTool: toolName, input: toolInput) {
+            let decision: PermissionDecision = (auto == .allow) ? .allow : .deny
+            let data = (try? JSONSerialization.data(withJSONObject: decision.hookResponseJSON)) ?? Data("{}".utf8)
+            self.respond(conn: conn, status: "200 OK", body: data)
             return
         }
 
@@ -128,15 +169,34 @@ final class PermissionServer: @unchecked Sendable {
             receivedAt: Date()
         )
 
-        // Single-shot guard so a user click and a connection drop can race
-        // safely — whichever lands first wins, the other is a no-op.
+        // Single-shot guard so a user click, a connection drop, and the
+        // stale-request timer can race safely — whichever lands first wins,
+        // the others are no-ops.
         let lock = NSLock()
         var resolved = false
+
+        // NWConnection doesn't reliably transition to .failed/.cancelled on a
+        // remote half-close while we're neither reading nor writing, so once
+        // the bridge's curl times out we'd otherwise leave the card pinned in
+        // the UI forever. Expire slightly past the bridge's CURL_TIMEOUT (90s)
+        // — by then Claude Code has already fallen back to its own prompt.
+        let timeoutWork = DispatchWorkItem { [weak self] in
+            lock.lock()
+            let alreadyResolved = resolved
+            if !alreadyResolved { resolved = true }
+            lock.unlock()
+            if alreadyResolved { return }
+            conn.cancel()
+            let id = pending.id
+            Task { @MainActor in self?.onCancel(id) }
+        }
+
         let resolveOnce: (PermissionDecision, Bool) -> Void = { [weak self] decision, sendResponse in
             lock.lock()
             if resolved { lock.unlock(); return }
             resolved = true
             lock.unlock()
+            timeoutWork.cancel()
             guard let self else { return }
             if sendResponse {
                 let data = (try? JSONSerialization.data(withJSONObject: decision.hookResponseJSON)) ?? Data("{}".utf8)
@@ -154,6 +214,7 @@ final class PermissionServer: @unchecked Sendable {
                 let alreadyResolved = resolved
                 if !alreadyResolved { resolved = true }
                 lock.unlock()
+                timeoutWork.cancel()
                 if alreadyResolved { return }
                 let id = pending.id
                 Task { @MainActor in self?.onCancel(id) }
@@ -161,6 +222,8 @@ final class PermissionServer: @unchecked Sendable {
                 break
             }
         }
+
+        queue.asyncAfter(deadline: .now() + 95, execute: timeoutWork)
 
         Task { @MainActor in
             self.handler(pending) { decision in

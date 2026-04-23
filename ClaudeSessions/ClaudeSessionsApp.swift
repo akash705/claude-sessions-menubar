@@ -9,10 +9,10 @@ struct ClaudeSessionsApp: App {
             MenuBarContent(store: store)
         } label: {
             // The label appears immediately at launch; the popover's onAppear
-            // doesn't fire until first click. Starting here ensures the
-            // permission server is up before any tool prompt arrives.
+            // doesn't fire until first click. MenuBarLabel's own .task starts
+            // the store, which ensures the permission server is up before any
+            // tool prompt arrives.
             MenuBarLabel(store: store)
-                .task { store.start() }
         }
         .menuBarExtraStyle(.window)
 
@@ -29,6 +29,7 @@ struct ClaudeSessionsApp: App {
 
 private struct MenuBarLabel: View {
     @ObservedObject var store: SessionStore
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         HStack(spacing: 3) {
@@ -42,6 +43,17 @@ private struct MenuBarLabel: View {
                 Text("\(store.activeBadgeCount)")
                     .font(.caption2.monospacedDigit())
             }
+        }
+        .task {
+            // Capture `openWindow` while we're inside a `Scene`, so the
+            // floating panel (hosted outside any Scene) can still route
+            // "Open History" through the same WindowGroup the popover uses.
+            FloatingPanelController.shared.setOpenHistory { id in
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "history", value: id)
+            }
+            store.start()
+            FloatingPanelController.shared.restoreOnLaunchIfNeeded(store: store)
         }
     }
 }
