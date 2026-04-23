@@ -10,6 +10,17 @@ struct SessionRow: View {
     /// Allow/Deny buttons — lets them hop to the terminal to inspect/answer
     /// in context rather than deciding blind from the menubar.
     var onFocusTerminal: (() -> Void)? = nil
+    /// Called when the user dismisses an informational permission card.
+    /// Only wired up when `onAllow`/`onDeny` are nil (i.e. "decide in app"
+    /// is off and the terminal owns the decision).
+    var onDismiss: (() -> Void)? = nil
+
+    /// Permission card is "interactive" when both Allow and Deny handlers
+    /// are wired up. If either is missing we render the informational
+    /// variant — no buttons, a dismiss X, and an "answer in terminal" hint.
+    private var isInteractivePermission: Bool {
+        onAllow != nil && onDeny != nil
+    }
 
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
@@ -111,13 +122,37 @@ struct SessionRow: View {
                 }
             }
 
-            HStack(spacing: 8) {
-                Button("Allow") { onAllow?() }
-                    .buttonStyle(PillActionStyle(tint: .green, prominent: true))
+            if isInteractivePermission {
+                HStack(spacing: 8) {
+                    Button("Allow") { onAllow?() }
+                        .buttonStyle(PillActionStyle(tint: .green, prominent: true))
+                        .pointerCursor()
+                    Button("Deny") { onDeny?() }
+                        .buttonStyle(PillActionStyle(tint: .red, prominent: false))
+                        .pointerCursor()
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text("Answer in terminal")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button {
+                        onDismiss?()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                     .pointerCursor()
-                Button("Deny") { onDeny?() }
-                    .buttonStyle(PillActionStyle(tint: .red, prominent: false))
-                    .pointerCursor()
+                    .help("Dismiss notice")
+                }
             }
         }
         .padding(12)

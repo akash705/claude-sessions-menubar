@@ -35,6 +35,18 @@ final class SessionStore: ObservableObject {
     @Published var isFloatingPanelCompact: Bool = UserDefaults.standard.bool(forKey: "floatingPanelCompact") {
         didSet { UserDefaults.standard.set(isFloatingPanelCompact, forKey: "floatingPanelCompact") }
     }
+    /// If true, permission cards show Allow/Deny and the decision happens
+    /// in-app. If false, the hook answers `ask` immediately so Claude's
+    /// terminal prompt fires — the card stays as an informational notice
+    /// and self-dismisses after a short TTL. Defaults true.
+    @Published var showPermissionButtons: Bool = {
+        // `object(forKey:)` so we can distinguish "unset" (first launch —
+        // default true) from "explicitly false".
+        if let v = UserDefaults.standard.object(forKey: "showPermissionButtons") as? Bool { return v }
+        return true
+    }() {
+        didSet { UserDefaults.standard.set(showPermissionButtons, forKey: "showPermissionButtons") }
+    }
     /// Permission requests held by the bridge hook, keyed by sessionId.
     /// Populated when the bridge POSTs to PermissionServer; cleared when the
     /// user clicks Allow/Deny (and the HTTP response goes back).
@@ -103,13 +115,23 @@ final class SessionStore: ObservableObject {
         let server = PermissionServer(
             handler: { [weak self] pending, resolve in
                 guard let self else { resolve(.deny); return }
-                self.pendingResolvers[pending.id] = resolve
                 self.pendingPermissions[pending.sessionId] = pending
                 self.startBlinking()
                 // Bring the main panel forward so the user doesn't have to
                 // hunt for the card — the prompt would otherwise sit silent
                 // in the closed popover. Non-activating, so focus stays put.
                 FloatingPanelController.shared.surfaceMainForAttention(store: self)
+                if self.showPermissionButtons {
+                    // Interactive mode: park the resolver and wait for the
+                    // user's click.
+                    self.pendingResolvers[pending.id] = resolve
+                } else {
+                    // Informational mode: hand the decision back to Claude's
+                    // terminal by responding `ask`; the card stays just long
+                    // enough for the user to notice and then self-dismisses.
+                    resolve(.ask)
+                    self.scheduleInformationalDismissal(pendingId: pending.id)
+                }
             },
             onCancel: { [weak self] pendingId in
                 self?.dropPendingPermission(pendingId: pendingId)
@@ -136,6 +158,24 @@ final class SessionStore: ObservableObject {
               let resolve = pendingResolvers.removeValue(forKey: pending.id) else { return }
         pendingPermissions.removeValue(forKey: sessionId)
         resolve(decision)
+    }
+
+    /// Dismisses an informational card. Used by the X button on cards
+    /// rendered when `showPermissionButtons == false` — there's no
+    /// resolver to call (we already responded `ask` to the hook) so this
+    /// just removes the UI entry.
+    func dismissPermission(sessionId: String) {
+        pendingPermissions.removeValue(forKey: sessionId)
+    }
+
+    /// Drops the informational card after a short TTL. The user has
+    /// usually answered in the terminal well before this fires; if not,
+    /// the row quietly goes away rather than getting pinned forever.
+    private func scheduleInformationalDismissal(pendingId: UUID) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 30_000_000_000) // 30s
+            self?.dropPendingPermission(pendingId: pendingId)
+        }
     }
 
     /// Called by PermissionServer when the bridge connection drops before

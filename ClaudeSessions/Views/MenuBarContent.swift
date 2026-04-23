@@ -217,10 +217,19 @@ struct MenuBarContentBody: View {
                 SessionRow(
                     session: session,
                     pendingPermission: store.pendingPermissions[session.id],
-                    onAllow: { store.resolvePermission(sessionId: session.id, decision: .allow) },
-                    onDeny: { store.resolvePermission(sessionId: session.id, decision: .deny) },
+                    // When the user has disabled "Decide in App", leave
+                    // Allow/Deny unwired — SessionRow renders the card in
+                    // informational mode and defers the decision to Claude's
+                    // terminal prompt.
+                    onAllow: store.showPermissionButtons
+                        ? { store.resolvePermission(sessionId: session.id, decision: .allow) }
+                        : nil,
+                    onDeny: store.showPermissionButtons
+                        ? { store.resolvePermission(sessionId: session.id, decision: .deny) }
+                        : nil,
                     onOpenHistory: { openHistory(session.id) },
-                    onFocusTerminal: { TerminalFocuser.focusTerminal(for: session) }
+                    onFocusTerminal: { TerminalFocuser.focusTerminal(for: session) },
+                    onDismiss: { store.dismissPermission(sessionId: session.id) }
                 )
                 .onTapGesture { primaryTap(on: session) }
                 .contextMenu { rowMenu(for: session) }
@@ -255,6 +264,9 @@ struct MenuBarContentBody: View {
                 .textCase(.uppercase)
                 .foregroundStyle(.tertiary)
             Menu {
+                Toggle("Allow/Deny in App", isOn: $store.showPermissionButtons)
+                    .help("When off, permission cards are informational only — answer in your terminal.")
+                Divider()
                 if HookInstaller.isHookInstalled() {
                     Button("Uninstall Permission Hook") {
                         runHookAction("Uninstall Permission Hook") { try HookInstaller.uninstallHook() }

@@ -80,15 +80,19 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         store.isFloatingPanelCompact = false
     }
 
-    /// Force-surfaces the main panel. Used when a permission request comes
-    /// in — the user needs to see and act on the card, so we bring the
-    /// full 500x500 panel forward even if they were currently hidden or
-    /// minimized to the pill.
+    /// Brings the main panel forward when something wants the user's
+    /// attention (permission, Stop hook, error, session-ended). We only
+    /// surface if the floating panel is *already* the user's chosen UI —
+    /// `isFloatingPanelOpen == true` means they have it up (either as the
+    /// full panel or collapsed to the pill). If they've closed it, they're
+    /// driving the app from the menubar popover; auto-opening a window
+    /// they've just dismissed would be obnoxious, so we rely on the
+    /// menubar blink alone in that case.
     func surfaceMainForAttention(store: SessionStore) {
+        guard store.isFloatingPanelOpen else { return }
         boundStore = store
         pillPanel?.orderOut(nil)
         showMain(store: store)
-        store.isFloatingPanelOpen = true
         store.isFloatingPanelCompact = false
     }
 
