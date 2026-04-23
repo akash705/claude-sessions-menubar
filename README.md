@@ -51,25 +51,30 @@ The app is a **read-only observer** of Claude Code's on-disk state, plus a loopb
 | `~/.claude/ide/*.lock` | One per connected IDE *window* — lets us match a session's cwd to a specific Cursor/VSCode window for precise focus. |
 | `~/.claude/settings.json` | Read for `permissions.allow` / `permissions.deny` rules, and written to install/uninstall our hook entries. |
 | `~/.claude/menubar/port` | Written by the app when the permission server binds; read by the bridge script to know where to POST. |
-| `~/.claude/menubar/permission-bridge.sh` | Shell script that Claude Code invokes as the hook command; POSTs to our server and writes the response to stdout. |
+| `~/.claude/menubar/permission-bridge.sh` | Shell script **written by the app on Install** (embedded in `HookInstaller.swift`, not checked into the repo) that Claude Code invokes as the hook command; POSTs to our server and writes the response to stdout. |
 
 ### Hook pipeline
 
-```
-Claude Code                Bridge script                 ClaudeSessions.app
-─────────────              ─────────────                 ──────────────────
-PreToolUse fires ─ stdin ▶ permission-bridge.sh ─ HTTP ▶ PermissionServer
-                                                         │
-                                                         ▼
-                                                         SessionStore.handler
-                                                         │  • records pending
-                                                         │  • starts blink
-                                                         │  • surfaces panel (rules below)
-                                                         ▼
-                                                         user clicks Allow/Deny
-                                                         │
-Claude Code ◀ stdout ────── bridge writes JSON   ◀ HTTP ─┘
-resumes tool call                                        resolve(decision)
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CC as Claude Code
+    participant BR as permission-bridge.sh
+    participant PS as PermissionServer
+    participant SS as SessionStore
+    participant U as User
+
+    CC->>BR: PreToolUse event (stdin JSON)
+    BR->>PS: POST /permission (HTTP, loopback)
+    PS->>SS: record pending permission
+    SS-->>SS: start menubar blink
+    SS-->>SS: surface floating panel (per rules)
+    SS->>U: show Allow/Deny card
+    U->>SS: click Allow / Deny
+    SS->>PS: resolve(decision)
+    PS-->>BR: HTTP response with decision JSON
+    BR-->>CC: write decision to stdout
+    CC->>CC: resume (or cancel) tool call
 ```
 
 Two endpoints:
