@@ -88,11 +88,18 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     /// driving the app from the menubar popover; auto-opening a window
     /// they've just dismissed would be obnoxious, so we rely on the
     /// menubar blink alone in that case.
-    func surfaceMainForAttention(store: SessionStore) {
-        guard store.isFloatingPanelOpen else { return }
+    ///
+    /// `force: true` overrides the "only if already open" rule — used for
+    /// permission requests, which block Claude until the user answers. The
+    /// menubar popover can't be programmatically opened (SwiftUI limitation),
+    /// so the floating panel is the only UI we can pop up to accept the
+    /// Allow/Deny click.
+    func surfaceMainForAttention(store: SessionStore, force: Bool = false) {
+        guard force || store.isFloatingPanelOpen else { return }
         boundStore = store
         pillPanel?.orderOut(nil)
         showMain(store: store)
+        store.isFloatingPanelOpen = true
         store.isFloatingPanelCompact = false
     }
 

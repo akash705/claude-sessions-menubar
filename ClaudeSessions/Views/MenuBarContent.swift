@@ -266,6 +266,8 @@ struct MenuBarContentBody: View {
             Menu {
                 Toggle("Allow/Deny in App", isOn: $store.showPermissionButtons)
                     .help("When off, permission cards are informational only — answer in your terminal.")
+                Toggle("Always Open Floating Panel", isOn: $store.autoOpenFloatingPanel)
+                    .help("When on, the floating panel opens automatically for every attention event. When off, it only opens for permissions if Allow/Deny in App is enabled.")
                 Divider()
                 if HookInstaller.isHookInstalled() {
                     Button("Uninstall Permission Hook") {

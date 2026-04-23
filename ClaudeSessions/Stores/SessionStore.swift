@@ -47,6 +47,15 @@ final class SessionStore: ObservableObject {
     }() {
         didSet { UserDefaults.standard.set(showPermissionButtons, forKey: "showPermissionButtons") }
     }
+    /// When true, the floating panel auto-opens on every attention event
+    /// (permission, turn-end, error, session-end) regardless of prior state.
+    /// When false, we fall back to the narrower rule: force-open only for
+    /// permissions when `showPermissionButtons` is on (because the in-app
+    /// card is the only way to answer); otherwise surface gently (expand
+    /// pill → main, but don't resurrect a closed panel).
+    @Published var autoOpenFloatingPanel: Bool = UserDefaults.standard.bool(forKey: "autoOpenFloatingPanel") {
+        didSet { UserDefaults.standard.set(autoOpenFloatingPanel, forKey: "autoOpenFloatingPanel") }
+    }
     /// Permission requests held by the bridge hook, keyed by sessionId.
     /// Populated when the bridge POSTs to PermissionServer; cleared when the
     /// user clicks Allow/Deny (and the HTTP response goes back).
@@ -117,10 +126,12 @@ final class SessionStore: ObservableObject {
                 guard let self else { resolve(.deny); return }
                 self.pendingPermissions[pending.sessionId] = pending
                 self.startBlinking()
-                // Bring the main panel forward so the user doesn't have to
-                // hunt for the card — the prompt would otherwise sit silent
-                // in the closed popover. Non-activating, so focus stays put.
-                FloatingPanelController.shared.surfaceMainForAttention(store: self)
+                // Force-open if the user opted into always-open, or if the
+                // in-app Allow/Deny card is the only way to answer. In the
+                // informational mode (no buttons) the terminal prompt will
+                // handle it, so we don't pop up uninvited.
+                let force = self.autoOpenFloatingPanel || self.showPermissionButtons
+                FloatingPanelController.shared.surfaceMainForAttention(store: self, force: force)
                 if self.showPermissionButtons {
                     // Interactive mode: park the resolver and wait for the
                     // user's click.
@@ -142,7 +153,10 @@ final class SessionStore: ObservableObject {
                 // tabbing back to the terminal.
                 guard let self else { return }
                 self.startBlinking()
-                FloatingPanelController.shared.surfaceMainForAttention(store: self)
+                FloatingPanelController.shared.surfaceMainForAttention(
+                    store: self,
+                    force: self.autoOpenFloatingPanel
+                )
             }
         )
         do {
@@ -230,7 +244,10 @@ final class SessionStore: ObservableObject {
                 // this JSONL-activity heuristic.
                 if needsAttention { self.startBlinking() }
                 if shouldSurface {
-                    FloatingPanelController.shared.surfaceMainForAttention(store: self)
+                    FloatingPanelController.shared.surfaceMainForAttention(
+                        store: self,
+                        force: self.autoOpenFloatingPanel
+                    )
                 }
             }
         }
