@@ -149,12 +149,14 @@ final class PermissionServer: @unchecked Sendable {
             self.respond(conn: conn, status: "400 Bad Request", body: Data())
             return
         }
+        let cwd = payload["cwd"] as? String
 
-        // Honor ~/.claude/settings.json permissions.allow / deny so rules the
+        // Honor permissions.allow / deny across user-global + project settings
+        // (settings.json + settings.local.json at both scopes) so rules the
         // user already approved don't re-prompt via our menubar. Our hook
         // fires before Claude Code's own rule check, so without this every
         // allow-ed call would still pop a card.
-        if let auto = PermissionRuleMatcher.decision(forTool: toolName, input: toolInput) {
+        if let auto = PermissionRuleMatcher.decision(forTool: toolName, input: toolInput, cwd: cwd) {
             let decision: PermissionDecision = (auto == .allow) ? .allow : .deny
             let data = (try? JSONSerialization.data(withJSONObject: decision.hookResponseJSON)) ?? Data("{}".utf8)
             self.respond(conn: conn, status: "200 OK", body: data)
