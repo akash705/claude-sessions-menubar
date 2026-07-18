@@ -126,10 +126,10 @@ enum HookInstaller {
 
     static func uninstallHook() throws {
         guard var settings = try readSettingsStrict() else { return }
-        guard var hooks = settings["hooks"] as? [String: Any] else { return }
+        guard var hooks = try dict(settings, "hooks") else { return }
 
         for key in ["PreToolUse", "Stop"] {
-            guard var list = hooks[key] as? [[String: Any]] else { continue }
+            var list = try hookList(hooks, key)
             list.removeAll { ($0["_source"] as? String) == hookMarker }
             if list.isEmpty {
                 hooks.removeValue(forKey: key)
@@ -310,6 +310,12 @@ enum HookInstaller {
     # "hook_event_name":"Stop" (e.g. a Write/Edit of this very file, or a Bash
     # command echoing it) can't be misread as a fire-and-forget Stop — which
     # would silently skip the in-app permission prompt for that call.
+    #
+    # This can't misfire the other way (a real Stop payload being pushed onto
+    # the blocking /permission path): Stop payloads carry no tool_input, and
+    # any quotes inside a JSON string value are backslash-escaped by the
+    # serializer, so a raw, unescaped `"tool_name":` substring can only ever
+    # come from an actual top-level key.
     if [ "$EVENT" = "Stop" ] && ! printf '%s' "$PAYLOAD" | grep -q '"tool_name"[[:space:]]*:'; then
         # Best-effort fire-and-forget; always succeed so we never block
         # Claude from ending a turn if our app is down.
