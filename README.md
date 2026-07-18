@@ -23,7 +23,7 @@ See which sessions are running, answer Allow/Deny without leaving your current w
 - **Allow / Deny in-app** — one click resolves the prompt. Claude never blocks on the terminal prompt you'd otherwise have to tab to.
 - **Informational mode** — toggle Allow/Deny off and cards become read-only notices; the terminal prompt answers as usual. The card self-dismisses after 30 seconds.
 - **Rule-aware** — reads `~/.claude/settings.json` `permissions.allow` / `permissions.deny` and auto-resolves matching calls without bothering you. Supports bare tool names (`Bash`) and Bash prefix rules (`Bash(git status:*)`).
-- **Graceful fallback** — if the app is down or the hook can't reach it, the bridge responds `ask` so Claude Code falls back to its own terminal prompt. You never get silently denied.
+- **Graceful fallback** — if the app is down or the hook can't reach it, the bridge responds `ask` so Claude Code falls back to its own terminal prompt. You never get silently denied. When the app isn't running the bridge gives up on connecting within ~2 s (it doesn't pin you for the full answer window), so an uninstalled-server or crashed app costs you almost nothing.
 
 ### Floating panel
 
@@ -51,6 +51,7 @@ The app is a **read-only observer** of Claude Code's on-disk state, plus a loopb
 | `~/.claude/ide/*.lock` | One per connected IDE *window* — lets us match a session's cwd to a specific Cursor/VSCode window for precise focus. |
 | `~/.claude/settings.json` | Read for `permissions.allow` / `permissions.deny` rules, and written to install/uninstall our hook entries. |
 | `~/.claude/menubar/port` | Written by the app when the permission server binds; read by the bridge script to know where to POST. |
+| `~/.claude/menubar/token` | Shared secret (0600) written next to the port; the bridge echoes it in `X-Menubar-Token` so the server rejects requests from any process that reused the old ephemeral port. |
 | `~/.claude/menubar/permission-bridge.sh` | Shell script **written by the app on Install** (embedded in `HookInstaller.swift`, not checked into the repo) that Claude Code invokes as the hook command; POSTs to our server and writes the response to stdout. |
 
 ### Hook pipeline
@@ -79,10 +80,10 @@ sequenceDiagram
 
 Two endpoints:
 
-- **`POST /permission`** — PreToolUse. The request blocks until the user answers (or the 95 s timeout fires, whichever comes first). Response body is `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"|"deny"|"ask"}}`.
+- **`POST /permission`** — PreToolUse. The bridge caps the TCP connect at ~2 s (`--connect-timeout`), so if the app isn't running it falls back to `ask` almost immediately instead of waiting. Once connected, the request blocks until the user answers or the bridge's curl hits its `--max-time` (~30 s, after which Claude Code falls back to its own terminal prompt and the app clears the now-dead card). The server itself expires the request at 32 s and the hook's outer `timeout` is 120 s, so the 30 s curl deadline is what a user effectively has to click. Every request must carry the `X-Menubar-Token` header (see the sources table) or the server answers `403` and the bridge falls back. Response body is `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"|"deny"|"ask"}}`.
 - **`POST /stop`** — Stop hook. Fire-and-forget. The app uses it to detect turn-end and auto-surface the panel.
 
-The server binds to `127.0.0.1` on an ephemeral port and publishes that port to `~/.claude/menubar/port`. The bridge re-reads the file on every invocation, so the port can change across app restarts without re-installing the hook.
+The server binds to `127.0.0.1` on an ephemeral port and publishes that port to `~/.claude/menubar/port` (plus a matching secret to `~/.claude/menubar/token`). The bridge re-reads both files on every invocation, so the port can change across app restarts without re-installing the hook, and a process that reused a stale port can't impersonate the app.
 
 ### Hook install/uninstall
 

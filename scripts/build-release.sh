@@ -41,5 +41,16 @@ rm -f "$ZIP"
 # in the way macOS expects for distributable .app bundles.
 ditto -c -k --keepParent "$APP" "$ZIP"
 
+DMG="$DIST/ClaudeSessions-$VERSION.dmg"
+rm -f "$DMG"
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+ditto "$APP" "$STAGE/ClaudeSessions.app"
+ln -s /Applications "$STAGE/Applications"
+hdiutil create -volname "ClaudeSessions $VERSION" \
+    -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+
 echo "Built: $ZIP"
 shasum -a 256 "$ZIP"
+echo "Built: $DMG"
+shasum -a 256 "$DMG"

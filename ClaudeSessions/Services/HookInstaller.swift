@@ -21,24 +21,40 @@ enum HookInstaller {
             .appendingPathComponent(".claude/settings.json")
     }
 
-    /// Idempotent. Safe to call on every app launch.
-    static func writeBridgeScript() {
+    /// Idempotent. Safe to call on every app launch. Throws so callers that
+    /// need the bridge to actually exist (Install) can surface the failure
+    /// instead of leaving a settings entry pointing at a missing script.
+    static func writeBridgeScript() throws {
+        try FileManager.default.createDirectory(at: menubarDir, withIntermediateDirectories: true)
+        try bridgeSource.write(to: bridgePath, atomically: true, encoding: .utf8)
+        // chmod +x — Foundation has no public symbolic flag, so set rwxr-xr-x.
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bridgePath.path)
+    }
+
+    /// Best-effort refresh for the launch path, where a transient failure
+    /// (e.g. home not yet mounted) shouldn't abort startup. Logs and moves on.
+    static func writeBridgeScriptBestEffort() {
         do {
-            try FileManager.default.createDirectory(at: menubarDir, withIntermediateDirectories: true)
-            try bridgeSource.write(to: bridgePath, atomically: true, encoding: .utf8)
-            // chmod +x — Foundation has no public symbolic flag, so set rwxr-xr-x.
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bridgePath.path)
+            try writeBridgeScript()
         } catch {
             NSLog("[ClaudeSessions] writeBridgeScript failed: \(error)")
         }
     }
 
+    /// The bridge is truly usable only if the script exists and is executable.
+    private static func bridgeScriptIsUsable() -> Bool {
+        FileManager.default.isExecutableFile(atPath: bridgePath.path)
+    }
+
     enum InstallError: Error, LocalizedError {
         case settingsUnparseable(URL)
+        case settingsShapeUnexpected(String)
         var errorDescription: String? {
             switch self {
             case .settingsUnparseable(let url):
                 return "Refusing to overwrite \(url.path) — file exists but is not valid JSON. Fix it manually first."
+            case .settingsShapeUnexpected(let key):
+                return "Refusing to modify settings.json — `\(key)` has an unexpected shape. Fix it manually first so we don't discard your data."
             }
         }
     }
@@ -47,27 +63,56 @@ enum HookInstaller {
     /// signal — the Stop hook rides along but isn't load-bearing on its own.
     static func isHookInstalled() -> Bool {
         guard let settings = try? readSettingsStrict() ?? [:] else { return false }
-        return ourStampedIndex(in: settings, key: "PreToolUse") != nil
+        guard ourStampedIndex(in: settings, key: "PreToolUse") != nil else { return false }
+        // A stamped entry that points at a missing/non-executable bridge is a
+        // broken install, not an installed one — reporting it as installed
+        // would hide the breakage behind an "Uninstall" label.
+        return bridgeScriptIsUsable()
     }
 
     /// Adds (or replaces) our PreToolUse + Stop hook entries. Preserves any
     /// other hook entries the user has configured. Throws rather than
     /// silently clobbering an unparseable settings.json.
     static func installHook() throws {
+        // Write the bridge before the settings entry so we never leave a hook
+        // pointing at a missing script. Throws (surfaced by the caller) on
+        // failure rather than logging and continuing.
+        try writeBridgeScript()
+
         var settings = try readSettingsStrict() ?? [:]
-        var hooks = settings["hooks"] as? [String: Any] ?? [:]
+        var hooks = try dict(settings, "hooks") ?? [:]
 
         hooks["PreToolUse"] = upsert(
-            list: hooks["PreToolUse"] as? [[String: Any]] ?? [],
+            list: try hookList(hooks, "PreToolUse"),
             entry: makeEntry(matcher: Self.promptingToolsMatcher, timeout: Self.preToolUseTimeout)
         )
         hooks["Stop"] = upsert(
-            list: hooks["Stop"] as? [[String: Any]] ?? [],
+            list: try hookList(hooks, "Stop"),
             // Stop has no matcher — it fires on every turn-end globally.
             entry: makeEntry(matcher: nil, timeout: Self.stopTimeout)
         )
         settings["hooks"] = hooks
         try writeSettings(settings)
+    }
+
+    /// Coerce `settings[key]` to an object, or throw if present-but-wrong-shape.
+    /// A missing key returns nil; a key holding a non-object (e.g. an array or
+    /// string) throws instead of being silently replaced with our own data.
+    private static func dict(_ settings: [String: Any], _ key: String) throws -> [String: Any]? {
+        guard let value = settings[key] else { return nil }
+        guard let obj = value as? [String: Any] else {
+            throw InstallError.settingsShapeUnexpected(key)
+        }
+        return obj
+    }
+
+    /// Coerce `hooks[key]` to a hook list, or throw if present-but-wrong-shape.
+    private static func hookList(_ hooks: [String: Any], _ key: String) throws -> [[String: Any]] {
+        guard let value = hooks[key] else { return [] }
+        guard let list = value as? [[String: Any]] else {
+            throw InstallError.settingsShapeUnexpected("hooks.\(key)")
+        }
+        return list
     }
 
     /// If our hook entries are already installed, rewrite them to the
@@ -81,10 +126,10 @@ enum HookInstaller {
 
     static func uninstallHook() throws {
         guard var settings = try readSettingsStrict() else { return }
-        guard var hooks = settings["hooks"] as? [String: Any] else { return }
+        guard var hooks = try dict(settings, "hooks") else { return }
 
         for key in ["PreToolUse", "Stop"] {
-            guard var list = hooks[key] as? [[String: Any]] else { continue }
+            var list = try hookList(hooks, key)
             list.removeAll { ($0["_source"] as? String) == hookMarker }
             if list.isEmpty {
                 hooks.removeValue(forKey: key)
@@ -193,6 +238,13 @@ enum HookInstaller {
             withJSONObject: settings,
             options: [.prettyPrinted, .sortedKeys]
         )
+        // Skip the write when nothing changed. `upgradeInstalledHookIfNeeded`
+        // runs on every launch; without this it would rewrite settings.json
+        // each time — bumping mtime and reformatting the user's file (our
+        // .sortedKeys/.prettyPrinted output) even when the hook is identical.
+        if let existing = try? Data(contentsOf: settingsPath), existing == data {
+            return
+        }
         try data.write(to: settingsPath, options: .atomic)
     }
 
@@ -216,10 +268,31 @@ enum HookInstaller {
     set -u
 
     PORT_FILE="$HOME/.claude/menubar/port"
+    TOKEN_FILE="$HOME/.claude/menubar/token"
+    # Authoritative human answer window. Must stay BELOW the server's request
+    # expiry (~32s) and Claude Code's hook `timeout` (120s) so curl is always
+    # the first to give up — that way the server sees the socket close and
+    # clears the now-dead card instead of two layers racing to time out.
     PERMISSION_TIMEOUT=30
     STOP_TIMEOUT=5
+    # Caps only the TCP connect, separately from the answer wait above. When
+    # the app isn't running we want the bridge to fall back to Claude's own
+    # prompt fast instead of pinning the user for the full answer window. A
+    # dead port usually refuses instantly; this bounds the rarer "connects but
+    # stalls" case (e.g. a stale port now held by another process). Loopback
+    # connects to a live app are sub-millisecond, so 2s is ample headroom.
+    CONNECT_TIMEOUT=2
 
     PAYLOAD=$(cat)
+
+    # Shared secret the server publishes next to the port; proves we're talking
+    # to our app and not a process that reused the old ephemeral port. Empty if
+    # absent — the server then rejects us and we fall back to Claude's prompt.
+    # `cat ... | tr` rather than `tr < file` so a missing token file is silent
+    # — with input redirection the "No such file" error leaks to stderr before
+    # `2>/dev/null` applies. Empty TOKEN just means the server rejects us and we
+    # fall back, which is the correct behavior when the app hasn't published one.
+    TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null | tr -d '[:space:]')
 
     EVENT=$(printf '%s' "$PAYLOAD" \
         | grep -o '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
@@ -231,15 +304,29 @@ enum HookInstaller {
         exit 0
     }
 
-    if [ "$EVENT" = "Stop" ]; then
+    # A PreToolUse payload always carries a top-level "tool_name"; a Stop
+    # payload never does. Requiring tool_name to be ABSENT before taking the
+    # Stop path means a tool_input that happens to embed the literal
+    # "hook_event_name":"Stop" (e.g. a Write/Edit of this very file, or a Bash
+    # command echoing it) can't be misread as a fire-and-forget Stop — which
+    # would silently skip the in-app permission prompt for that call.
+    #
+    # This can't misfire the other way (a real Stop payload being pushed onto
+    # the blocking /permission path): Stop payloads carry no tool_input, and
+    # any quotes inside a JSON string value are backslash-escaped by the
+    # serializer, so a raw, unescaped `"tool_name":` substring can only ever
+    # come from an actual top-level key.
+    if [ "$EVENT" = "Stop" ] && ! printf '%s' "$PAYLOAD" | grep -q '"tool_name"[[:space:]]*:'; then
         # Best-effort fire-and-forget; always succeed so we never block
         # Claude from ending a turn if our app is down.
         if [ -r "$PORT_FILE" ]; then
             PORT=$(tr -d '[:space:]' < "$PORT_FILE")
             if [ -n "$PORT" ]; then
                 printf '%s' "$PAYLOAD" | curl -fsS \
+                    --connect-timeout "$CONNECT_TIMEOUT" \
                     --max-time "$STOP_TIMEOUT" \
                     -H "Content-Type: application/json" \
+                    -H "X-Menubar-Token: $TOKEN" \
                     --data-binary @- \
                     "http://127.0.0.1:$PORT/stop" >/dev/null 2>&1 || true
             fi
@@ -254,8 +341,10 @@ enum HookInstaller {
     [ -n "$PORT" ] || permission_fallback
 
     RESPONSE=$(printf '%s' "$PAYLOAD" | curl -fsS \
+        --connect-timeout "$CONNECT_TIMEOUT" \
         --max-time "$PERMISSION_TIMEOUT" \
         -H "Content-Type: application/json" \
+        -H "X-Menubar-Token: $TOKEN" \
         --data-binary @- \
         "http://127.0.0.1:$PORT/permission" 2>/dev/null) || permission_fallback
 
