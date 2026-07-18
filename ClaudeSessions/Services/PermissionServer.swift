@@ -33,6 +33,14 @@ final class PermissionServer: @unchecked Sendable {
     private let onStop: StopHandler
     private(set) var port: UInt16 = 0
 
+    /// Shared secret published alongside the port and echoed back by the
+    /// bridge in `X-Menubar-Token`. If the app crashes without cleaning up and
+    /// an unrelated process later binds our old ephemeral port, that process
+    /// won't know this token, so we reject its requests instead of acting on a
+    /// stray POST. Not a defense against a same-user process that can read the
+    /// 0600 token file — that's outside the loopback/same-user threat model.
+    private let token = UUID().uuidString + UUID().uuidString
+
     init(
         handler: @escaping RequestHandler,
         onCancel: @escaping CancelHandler,
@@ -118,6 +126,13 @@ final class PermissionServer: @unchecked Sendable {
         let parts = firstLine.split(separator: " ").map(String.init)
         guard parts.count >= 2, parts[0] == "POST" else {
             self.respond(conn: conn, status: "404 Not Found", body: Data())
+            return
+        }
+
+        // Reject anything that doesn't carry our shared token — see `token`.
+        let presented = headerValue(headerText, "X-Menubar-Token")
+        guard presented == token else {
+            self.respond(conn: conn, status: "403 Forbidden", body: Data())
             return
         }
 
@@ -268,13 +283,20 @@ final class PermissionServer: @unchecked Sendable {
     private static let portDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude/menubar", isDirectory: true)
     private static let portFile = portDir.appendingPathComponent("port")
+    private static let tokenFile = portDir.appendingPathComponent("token")
 
     private func publishPort(_ port: UInt16) {
         try? FileManager.default.createDirectory(at: Self.portDir, withIntermediateDirectories: true)
+        // Token first, so a bridge that reads a fresh port always finds a
+        // matching token already on disk. Written 0600 (not the default) since
+        // it gates the server.
+        try? token.write(to: Self.tokenFile, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.tokenFile.path)
         try? "\(port)\n".write(to: Self.portFile, atomically: true, encoding: .utf8)
     }
 
     private func unpublishPort() {
         try? FileManager.default.removeItem(at: Self.portFile)
+        try? FileManager.default.removeItem(at: Self.tokenFile)
     }
 }

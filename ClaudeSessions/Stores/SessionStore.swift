@@ -115,7 +115,7 @@ final class SessionStore: ObservableObject {
     private func startPermissionServer() {
         // Refresh the bridge script first — keeps the on-disk script in sync
         // with whatever ships in this build of the app.
-        HookInstaller.writeBridgeScript()
+        HookInstaller.writeBridgeScriptBestEffort()
         // Same idea for the settings.json entry itself: if the user already
         // installed the hook, re-stamp it so format changes (e.g. added
         // `matcher`) roll out on upgrade without a manual reinstall.
