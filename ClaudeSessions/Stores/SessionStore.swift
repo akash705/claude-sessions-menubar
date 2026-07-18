@@ -56,10 +56,13 @@ final class SessionStore: ObservableObject {
     @Published var autoOpenFloatingPanel: Bool = UserDefaults.standard.bool(forKey: "autoOpenFloatingPanel") {
         didSet { UserDefaults.standard.set(autoOpenFloatingPanel, forKey: "autoOpenFloatingPanel") }
     }
-    /// Permission requests held by the bridge hook, keyed by sessionId.
-    /// Populated when the bridge POSTs to PermissionServer; cleared when the
-    /// user clicks Allow/Deny (and the HTTP response goes back).
-    @Published private(set) var pendingPermissions: [String: PendingPermission] = [:]
+    /// Permission requests held by the bridge hook, keyed by the pending's
+    /// `id`. Keyed by id (not sessionId) so a single session can have several
+    /// requests in flight at once — routine when Claude batches tool calls or
+    /// fans out to subagents. Populated when the bridge POSTs to
+    /// PermissionServer; cleared when the user clicks Allow/Deny (and the HTTP
+    /// response goes back).
+    @Published private(set) var pendingPermissions: [UUID: PendingPermission] = [:]
 
     private let scanQueue = DispatchQueue(label: "SessionStore.scan", qos: .utility)
     private var watcher: FileWatcher?
@@ -68,7 +71,9 @@ final class SessionStore: ObservableObject {
     private var blinkStopTimer: Timer?
     private var permissionServer: PermissionServer?
     /// Resolves the HTTP request blocked on the bridge — keyed by pending id.
-    private var pendingResolvers: [UUID: (PermissionDecision) -> Void] = [:]
+    /// The optional `String` is a deny reason surfaced back to Claude via
+    /// `permissionDecisionReason`; nil for allow/ask.
+    private var pendingResolvers: [UUID: (PermissionDecision, String?) -> Void] = [:]
 
     private struct PrevState {
         let status: SessionStatus
@@ -123,8 +128,8 @@ final class SessionStore: ObservableObject {
 
         let server = PermissionServer(
             handler: { [weak self] pending, resolve in
-                guard let self else { resolve(.deny); return }
-                self.pendingPermissions[pending.sessionId] = pending
+                guard let self else { resolve(.deny, nil); return }
+                self.pendingPermissions[pending.id] = pending
                 self.startBlinking()
                 // Force-open if the user opted into always-open, or if the
                 // in-app Allow/Deny card is the only way to answer. In the
@@ -132,7 +137,10 @@ final class SessionStore: ObservableObject {
                 // handle it, so we don't pop up uninvited.
                 let force = self.autoOpenFloatingPanel || self.showPermissionButtons
                 FloatingPanelController.shared.surfaceMainForAttention(store: self, force: force)
-                if self.showPermissionButtons {
+                // AskUserQuestion can't be answered by a hook (it returns no
+                // choice), so it's always informational — respond `ask` and let
+                // Claude Code's own picker run in the terminal.
+                if self.showPermissionButtons && pending.kind != .ask {
                     // Interactive mode: park the resolver and wait for the
                     // user's click.
                     self.pendingResolvers[pending.id] = resolve
@@ -140,7 +148,7 @@ final class SessionStore: ObservableObject {
                     // Informational mode: hand the decision back to Claude's
                     // terminal by responding `ask`; the card stays just long
                     // enough for the user to notice and then self-dismisses.
-                    resolve(.ask)
+                    resolve(.ask, nil)
                     self.scheduleInformationalDismissal(pendingId: pending.id)
                 }
             },
@@ -167,19 +175,34 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func resolvePermission(sessionId: String, decision: PermissionDecision) {
-        guard let pending = pendingPermissions[sessionId],
-              let resolve = pendingResolvers.removeValue(forKey: pending.id) else { return }
-        pendingPermissions.removeValue(forKey: sessionId)
-        resolve(decision)
+    func resolvePermission(id: UUID, decision: PermissionDecision, reason: String? = nil) {
+        guard let resolve = pendingResolvers.removeValue(forKey: id) else { return }
+        pendingPermissions.removeValue(forKey: id)
+        resolve(decision, reason)
+    }
+
+    /// Allows the request AND persists a matcher-compatible allow rule so the
+    /// same call auto-resolves next time without a card. A no-op on the rule
+    /// side when no specific rule can be derived (see `HookInstaller.allowRule`),
+    /// but still allows this one call.
+    func resolvePermissionAlways(id: UUID) {
+        if let pending = pendingPermissions[id],
+           let rule = HookInstaller.allowRule(for: pending) {
+            do {
+                try HookInstaller.appendAllowRule(rule, cwd: pending.cwd)
+            } catch {
+                NSLog("[ClaudeSessions] appendAllowRule failed: \(error)")
+            }
+        }
+        resolvePermission(id: id, decision: .allow)
     }
 
     /// Dismisses an informational card. Used by the X button on cards
     /// rendered when `showPermissionButtons == false` — there's no
     /// resolver to call (we already responded `ask` to the hook) so this
     /// just removes the UI entry.
-    func dismissPermission(sessionId: String) {
-        pendingPermissions.removeValue(forKey: sessionId)
+    func dismissPermission(id: UUID) {
+        pendingPermissions.removeValue(forKey: id)
     }
 
     /// Drops the informational card after a short TTL. The user has
@@ -201,14 +224,13 @@ final class SessionStore: ObservableObject {
     /// card was already informational, so we just drop it.
     private func expireOrDropPendingPermission(pendingId: UUID) {
         guard pendingResolvers.removeValue(forKey: pendingId) != nil,
-              let sessionId = pendingPermissions.first(where: { $0.value.id == pendingId })?.key,
-              var pending = pendingPermissions[sessionId]
+              var pending = pendingPermissions[pendingId]
         else {
             dropPendingPermission(pendingId: pendingId)
             return
         }
         pending.expired = true
-        pendingPermissions[sessionId] = pending
+        pendingPermissions[pendingId] = pending
         scheduleInformationalDismissal(pendingId: pendingId)
     }
 
@@ -218,9 +240,7 @@ final class SessionStore: ObservableObject {
     /// the built-in prompt, so there's no resolver to call.
     fileprivate func dropPendingPermission(pendingId: UUID) {
         pendingResolvers.removeValue(forKey: pendingId)
-        if let sessionId = pendingPermissions.first(where: { $0.value.id == pendingId })?.key {
-            pendingPermissions.removeValue(forKey: sessionId)
-        }
+        pendingPermissions.removeValue(forKey: pendingId)
     }
 
     func stop() {
@@ -237,7 +257,7 @@ final class SessionStore: ObservableObject {
         // Anyone still waiting on us must be unblocked, or the hook hangs
         // until the 600s Claude Code timeout. Hand control back to the
         // built-in prompt rather than silently allowing or denying.
-        for (_, resolve) in pendingResolvers { resolve(.ask) }
+        for (_, resolve) in pendingResolvers { resolve(.ask, nil) }
         pendingResolvers.removeAll()
         pendingPermissions.removeAll()
     }

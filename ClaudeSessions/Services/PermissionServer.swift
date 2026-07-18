@@ -15,7 +15,7 @@ final class PermissionServer: @unchecked Sendable {
 
     /// Called on the main actor when a new permission request arrives. The
     /// closure must call `resolve` exactly once with the user's decision.
-    typealias RequestHandler = @MainActor (PendingPermission, _ resolve: @escaping (PermissionDecision) -> Void) -> Void
+    typealias RequestHandler = @MainActor (PendingPermission, _ resolve: @escaping (PermissionDecision, _ reason: String?) -> Void) -> Void
 
     /// Fired when the bridge connection drops before the user answered —
     /// e.g. curl hit its timeout. Lets the UI clear the now-dead request
@@ -173,7 +173,7 @@ final class PermissionServer: @unchecked Sendable {
         // allow-ed call would still pop a card.
         if let auto = PermissionRuleMatcher.decision(forTool: toolName, input: toolInput, cwd: cwd) {
             let decision: PermissionDecision = (auto == .allow) ? .allow : .deny
-            let data = (try? JSONSerialization.data(withJSONObject: decision.hookResponseJSON)) ?? Data("{}".utf8)
+            let data = (try? JSONSerialization.data(withJSONObject: decision.hookResponseJSON())) ?? Data("{}".utf8)
             self.respond(conn: conn, status: "200 OK", body: data)
             return
         }
@@ -183,6 +183,7 @@ final class PermissionServer: @unchecked Sendable {
             sessionId: sessionId,
             toolName: toolName,
             toolInput: toolInput,
+            cwd: cwd,
             receivedAt: Date()
         )
 
@@ -208,7 +209,7 @@ final class PermissionServer: @unchecked Sendable {
             Task { @MainActor in self?.onCancel(id) }
         }
 
-        let resolveOnce: (PermissionDecision, Bool) -> Void = { [weak self] decision, sendResponse in
+        let resolveOnce: (PermissionDecision, String?, Bool) -> Void = { [weak self] decision, reason, sendResponse in
             lock.lock()
             if resolved { lock.unlock(); return }
             resolved = true
@@ -216,7 +217,7 @@ final class PermissionServer: @unchecked Sendable {
             timeoutWork.cancel()
             guard let self else { return }
             if sendResponse {
-                let data = (try? JSONSerialization.data(withJSONObject: decision.hookResponseJSON)) ?? Data("{}".utf8)
+                let data = (try? JSONSerialization.data(withJSONObject: decision.hookResponseJSON(reason: reason))) ?? Data("{}".utf8)
                 self.queue.async { self.respond(conn: conn, status: "200 OK", body: data) }
             }
         }
@@ -243,8 +244,8 @@ final class PermissionServer: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + 32, execute: timeoutWork)
 
         Task { @MainActor in
-            self.handler(pending) { decision in
-                resolveOnce(decision, true)
+            self.handler(pending) { decision, reason in
+                resolveOnce(decision, reason, true)
             }
         }
     }

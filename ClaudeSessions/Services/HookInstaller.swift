@@ -152,11 +152,16 @@ enum HookInstaller {
     private static let hookMarker = "claude-sessions-menubar"
 
     /// Regex matched against Claude Code tool names. Covers the tools that
-    /// mutate state or run arbitrary code — the ones Claude Code itself
-    /// would prompt on. Read/Grep/Glob/LS are deliberately excluded so the
-    /// menubar isn't spammed with auto-allowed calls. `Task` is included
-    /// because spawning a subagent fans out to more tool calls.
-    private static let promptingToolsMatcher = "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|Task"
+    /// mutate state, run arbitrary code, reach the network, or ask the user
+    /// something — the ones Claude Code itself would prompt on — plus every
+    /// MCP tool (`mcp__server__tool`). Read/Grep/Glob/LS are deliberately
+    /// excluded so the bridge never even runs for silent auto-allowed reads
+    /// (an explicit list, not `*`, keeps them off the hot path). `Task` is
+    /// included because spawning a subagent fans out to more tool calls; a
+    /// brand-new tool we don't list simply falls back to Claude Code's own
+    /// prompt, which is the safe default.
+    private static let promptingToolsMatcher =
+        "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|ExitPlanMode|AskUserQuestion|mcp__.*"
 
     private static let preToolUseTimeout = 120
     /// Stop is fire-and-forget; the bridge returns `{}` immediately without
@@ -212,10 +217,10 @@ enum HookInstaller {
     /// Returns nil if the file doesn't exist (fine — we'll create it).
     /// Throws `InstallError.settingsUnparseable` if the file exists but
     /// isn't valid JSON, so we never silently overwrite the user's data.
-    private static func readSettingsStrict() throws -> [String: Any]? {
+    private static func readSettingsStrict(at url: URL = settingsPath) throws -> [String: Any]? {
         let data: Data
         do {
-            data = try Data(contentsOf: settingsPath)
+            data = try Data(contentsOf: url)
         } catch {
             // Treat any read failure as "no settings yet". The most common
             // case is ENOENT; permission errors will surface again on write.
@@ -225,15 +230,15 @@ enum HookInstaller {
         do {
             parsed = try JSONSerialization.jsonObject(with: data)
         } catch {
-            throw InstallError.settingsUnparseable(settingsPath)
+            throw InstallError.settingsUnparseable(url)
         }
         guard let obj = parsed as? [String: Any] else {
-            throw InstallError.settingsUnparseable(settingsPath)
+            throw InstallError.settingsUnparseable(url)
         }
         return obj
     }
 
-    private static func writeSettings(_ settings: [String: Any]) throws {
+    private static func writeSettings(_ settings: [String: Any], to url: URL = settingsPath) throws {
         let data = try JSONSerialization.data(
             withJSONObject: settings,
             options: [.prettyPrinted, .sortedKeys]
@@ -242,10 +247,71 @@ enum HookInstaller {
         // runs on every launch; without this it would rewrite settings.json
         // each time — bumping mtime and reformatting the user's file (our
         // .sortedKeys/.prettyPrinted output) even when the hook is identical.
-        if let existing = try? Data(contentsOf: settingsPath), existing == data {
+        if let existing = try? Data(contentsOf: url), existing == data {
             return
         }
-        try data.write(to: settingsPath, options: .atomic)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: url, options: .atomic)
+    }
+
+    // MARK: - "Always Allow" rule persistence
+
+    /// The narrowest, matcher-compatible allow rule for a request, or nil when
+    /// no *specific* rule can be derived — in which case "Always Allow" should
+    /// be disabled rather than persist an over-broad grant. Deliberately
+    /// conservative:
+    ///   • MCP tool → the exact `mcp__server__tool` name (a bare-name match).
+    ///   • WebFetch → `WebFetch(domain:<host>)` scoped to the URL's host.
+    ///   • Edit/Write/MultiEdit → the exact `file_path` for the actual tool.
+    ///   • Bash → nil (a first-word prefix like `Bash(git *)` would allow
+    ///     `git push --force`; too risky to auto-derive).
+    ///   • Everything else → nil (only a blanket `ToolName` could be written).
+    /// Every returned rule round-trips through `PermissionRuleMatcher` so the
+    /// same call auto-resolves next time instead of re-prompting.
+    static func allowRule(for pending: PendingPermission) -> String? {
+        switch pending.kind {
+        case .mcp:
+            return pending.toolName
+        case .webFetch:
+            guard let urlString = pending.url,
+                  let host = URLComponents(string: urlString)?.host else { return nil }
+            return "WebFetch(domain:\(host))"
+        case .edit, .multiEdit, .write:
+            guard let path = pending.filePath else { return nil }
+            return "\(pending.toolName)(\(path))"
+        case .bash, .ask, .generic:
+            return nil
+        }
+    }
+
+    /// Appends an allow rule to the project-local `settings.local.json` (the
+    /// conventional machine-specific location), or user-global local settings
+    /// when there's no project directory. Project-local scoping keeps a grant
+    /// derived from one repo out of unrelated sessions, and avoids reformatting
+    /// the user's hand-maintained global `settings.json`. Dedups so repeated
+    /// clicks don't grow the list. Throws on unparseable target JSON.
+    static func appendAllowRule(_ rule: String, cwd: String?) throws {
+        let target = allowRuleTargetPath(cwd: cwd)
+        var settings = try readSettingsStrict(at: target) ?? [:]
+        var permissions = try dict(settings, "permissions") ?? [:]
+        var allow = (permissions["allow"] as? [String]) ?? []
+        guard !allow.contains(rule) else { return }
+        allow.append(rule)
+        permissions["allow"] = allow
+        settings["permissions"] = permissions
+        try writeSettings(settings, to: target)
+    }
+
+    private static func allowRuleTargetPath(cwd: String?) -> URL {
+        if let cwd, !cwd.isEmpty {
+            return URL(fileURLWithPath: cwd, isDirectory: true)
+                .appendingPathComponent(".claude/settings.local.json")
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/settings.local.json")
     }
 
     /// Bridge script. Dispatches by `hook_event_name` in the payload:

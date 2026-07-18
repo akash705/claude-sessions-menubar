@@ -1,10 +1,17 @@
 import SwiftUI
+import AppKit
+import ImageIO
 
 struct SessionRow: View {
     let session: Session
     var pendingPermission: PendingPermission? = nil
     var onAllow: (() -> Void)? = nil
-    var onDeny: (() -> Void)? = nil
+    /// Deny with an optional free-text reason surfaced back to Claude via
+    /// `permissionDecisionReason`. nil = plain deny.
+    var onDeny: ((String?) -> Void)? = nil
+    /// Allow this call AND persist a rule so identical calls stop prompting.
+    /// Only wired when a specific, safe rule can be derived for the tool.
+    var onAlwaysAllow: (() -> Void)? = nil
     var onOpenHistory: (() -> Void)? = nil
     /// Called when the user taps the permission card anywhere outside the
     /// Allow/Deny buttons — lets them hop to the terminal to inspect/answer
@@ -14,6 +21,10 @@ struct SessionRow: View {
     /// Only wired up when `onAllow`/`onDeny` are nil (i.e. "decide in app"
     /// is off and the terminal owns the decision).
     var onDismiss: (() -> Void)? = nil
+
+    /// Reveals the optional deny-reason field once the user taps Deny.
+    @State private var showingDenyField = false
+    @State private var denyReason = ""
 
     /// Permission card is "interactive" when both Allow and Deny handlers
     /// are wired up. If either is missing we render the informational
@@ -111,48 +122,22 @@ struct SessionRow: View {
                     .foregroundStyle(.tertiary)
             }
 
-            HStack(alignment: .top, spacing: 8) {
-                PermissionBadge()
-                if let pending = pendingPermission {
-                    Text(pending.summary)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.primary.opacity(0.85))
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
+            if let pending = pendingPermission {
+                HStack(alignment: .center, spacing: 8) {
+                    PermissionBadge()
+                    Text(toolTitle(pending))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
                 }
+                detail(for: pending)
             }
 
             if isInteractivePermission {
-                HStack(spacing: 8) {
-                    Button("Allow") { onAllow?() }
-                        .buttonStyle(PillActionStyle(tint: .green, prominent: true))
-                        .pointerCursor()
-                    Button("Deny") { onDeny?() }
-                        .buttonStyle(PillActionStyle(tint: .red, prominent: false))
-                        .pointerCursor()
-                }
+                actionButtons
             } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                    Text("Answer in terminal")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Button {
-                        onDismiss?()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20, height: 20)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                    .help("Dismiss notice")
-                }
+                informationalFooter
             }
         }
         .padding(12)
@@ -164,13 +149,239 @@ struct SessionRow: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.28), lineWidth: 1)
         )
-        // Make the card tappable as a whole; the Allow/Deny Buttons above
+        // Make the card tappable as a whole; the action Buttons above
         // capture their own taps, so only the surrounding area routes here.
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .onTapGesture { onFocusTerminal?() }
         .pointerCursor()
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
+    }
+
+    // MARK: - Permission card: action area
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        if showingDenyField {
+            VStack(alignment: .leading, spacing: 6) {
+                TextField("Reason (optional)", text: $denyReason)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                    .onSubmit { commitDeny() }
+                HStack(spacing: 8) {
+                    Button("Cancel") {
+                        showingDenyField = false
+                        denyReason = ""
+                    }
+                    .buttonStyle(PillActionStyle(tint: .gray, prominent: false))
+                    .pointerCursor()
+                    Button("Send Deny") { commitDeny() }
+                        .buttonStyle(PillActionStyle(tint: .red, prominent: true))
+                        .pointerCursor()
+                }
+            }
+        } else {
+            HStack(spacing: 8) {
+                Button("Allow") { onAllow?() }
+                    .buttonStyle(PillActionStyle(tint: .green, prominent: true))
+                    .pointerCursor()
+                if let onAlwaysAllow {
+                    Button("Always") { onAlwaysAllow() }
+                        .buttonStyle(PillActionStyle(tint: .blue, prominent: false))
+                        .pointerCursor()
+                        .help(alwaysAllowHelp)
+                }
+                Button("Deny") { showingDenyField = true }
+                    .buttonStyle(PillActionStyle(tint: .red, prominent: false))
+                    .pointerCursor()
+            }
+        }
+    }
+
+    private func commitDeny() {
+        let trimmed = denyReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        onDeny?(trimmed.isEmpty ? nil : trimmed)
+        showingDenyField = false
+        denyReason = ""
+    }
+
+    private var alwaysAllowHelp: String {
+        if let pending = pendingPermission, let rule = HookInstaller.allowRule(for: pending) {
+            return "Always allow — adds rule: \(rule)"
+        }
+        return "Always allow this call"
+    }
+
+    private var informationalFooter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "terminal")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            Text("Answer in terminal")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Button {
+                onDismiss?()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help("Dismiss notice")
+        }
+    }
+
+    // MARK: - Permission card: per-tool detail
+
+    private func toolTitle(_ pending: PendingPermission) -> String {
+        if let c = pending.mcpComponents {
+            return c.tool.isEmpty ? pending.toolName : "\(c.server) › \(c.tool)"
+        }
+        return pending.toolName
+    }
+
+    @ViewBuilder
+    private func detail(for pending: PendingPermission) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch pending.kind {
+            case .bash:
+                codeBlock(pending.command ?? pending.summary)
+            case .edit:
+                if let path = pending.filePath { pathLabel(path) }
+                diffView(old: pending.oldString ?? "", new: pending.newString ?? "")
+            case .multiEdit:
+                if let path = pending.filePath { pathLabel(path) }
+                let edits = pending.edits
+                Text("\(edits.count) edit\(edits.count == 1 ? "" : "s")")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                if let first = edits.first {
+                    diffView(old: first.old, new: first.new)
+                }
+            case .write:
+                if let path = pending.filePath { pathLabel(path) }
+                if let content = pending.content { codeBlock(content) }
+            case .webFetch:
+                if let url = pending.url { detailLine(url, mono: true) }
+                if let prompt = pending.prompt { detailLine(prompt, mono: false) }
+            case .ask:
+                detailLine(pending.question ?? pending.summary, mono: false)
+            case .mcp, .generic:
+                paramList(pending.toolInput)
+            }
+
+            let images = pending.imagePaths
+            if !images.isEmpty { thumbnails(images) }
+        }
+    }
+
+    private func detailLine(_ text: String, mono: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 11, design: mono ? .monospaced : .default))
+            .foregroundStyle(.primary.opacity(0.85))
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func pathLabel(_ path: String) -> some View {
+        Text(path)
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Bounded, scrollable monospaced block. Content is hard-capped so a
+    /// whole-file `content` or a long command can't balloon the card.
+    private func codeBlock(_ text: String, tint: Color = .primary) -> some View {
+        ScrollView(.vertical) {
+            Text(Self.capped(text))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(tint.opacity(0.9))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxHeight: 140)
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
+    }
+
+    private func diffView(old: String, new: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !old.isEmpty { codeBlock(old, tint: .red) }
+            if !new.isEmpty { codeBlock(new, tint: .green) }
+        }
+    }
+
+    private func paramList(_ input: [String: Any]) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(input.keys.sorted(), id: \.self) { key in
+                HStack(alignment: .top, spacing: 6) {
+                    Text(key)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Text(Self.capped(String(describing: input[key] ?? ""), maxChars: 240))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.primary.opacity(0.85))
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
+    }
+
+    private func thumbnails(_ paths: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(paths, id: \.self) { path in
+                    if let img = Self.thumbnail(path: path) {
+                        Image(nsImage: img)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 120, height: 88)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                            )
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: 92)
+    }
+
+    private static func capped(_ s: String, maxChars: Int = 2000) -> String {
+        if s.count <= maxChars { return s }
+        return String(s.prefix(maxChars)) + "\n… (truncated)"
+    }
+
+    /// Downscaled thumbnail via ImageIO — avoids loading a full-resolution
+    /// screenshot into memory just to show a 120pt preview.
+    private static func thumbnail(path: String, maxPixel: CGFloat = 240) -> NSImage? {
+        guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else {
+            return nil
+        }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else {
+            return nil
+        }
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
 }
 

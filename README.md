@@ -19,10 +19,14 @@ See which sessions are running, answer Allow/Deny without leaving your current w
 
 ### Permission prompts in the menubar
 
-- **PreToolUse hook bridge** — when Claude wants to run a Bash/Write/Edit/WebFetch/Task tool, instead of the terminal prompt you get a native card in the app, with the tool name and arguments.
-- **Allow / Deny in-app** — one click resolves the prompt. Claude never blocks on the terminal prompt you'd otherwise have to tab to.
+- **PreToolUse hook bridge** — when Claude wants to run a tool that would prompt (Bash, Write, Edit/MultiEdit, WebFetch, WebSearch, Task, ExitPlanMode, AskUserQuestion, **and every MCP `mcp__…` tool**), you get a native card in the app instead of the terminal prompt. Read/Grep/Glob/LS stay excluded so silent auto-allowed reads never spawn the bridge.
+- **Rich per-tool cards** — each card renders detail for its tool: the full Bash command, an Edit/MultiEdit old→new diff, a Write file + content preview, WebFetch url + prompt, an MCP `server › tool` header with parameters, or a generic key/value list. Local image paths (e.g. a pasted screenshot) render as inline thumbnails.
+- **Allow / Deny in-app** — one click resolves the prompt. Claude never blocks on the terminal prompt you'd otherwise have to tab to. **Multiple concurrent requests** on one session each get their own card.
+- **Always Allow** — persists a narrow, matcher-compatible rule to the project's `settings.local.json` so identical calls stop prompting (the exact rule is shown on hover). Offered only where a *specific* rule can be derived (MCP tool, WebFetch domain, exact file path); Bash and blanket-only tools are deliberately excluded.
+- **Deny with feedback** — Deny reveals an optional reason field; the reason is sent back to Claude via `permissionDecisionReason` so it knows *why*.
+- **AskUserQuestion** — shown as an informational card (a hook can't answer a question); the terminal owns the real picker. Focus the terminal from the card to answer.
 - **Informational mode** — toggle Allow/Deny off and cards become read-only notices; the terminal prompt answers as usual. The card self-dismisses after 30 seconds.
-- **Rule-aware** — reads `~/.claude/settings.json` `permissions.allow` / `permissions.deny` and auto-resolves matching calls without bothering you. Supports bare tool names (`Bash`) and Bash prefix rules (`Bash(git status:*)`).
+- **Rule-aware** — reads `~/.claude/settings.json` / `settings.local.json` `permissions.allow` / `permissions.deny` (user + project scopes) and auto-resolves matching calls without bothering you. Supports bare tool names (`Bash`), tool-name globs (`mcp__memory__*`), Bash prefix rules (`Bash(git status:*)`), `WebFetch(domain:host)`, and file-path globs (`Edit(/src/**)`).
 - **Graceful fallback** — if the app is down or the hook can't reach it, the bridge responds `ask` so Claude Code falls back to its own terminal prompt. You never get silently denied. When the app isn't running the bridge gives up on connecting within ~2 s (it doesn't pin you for the full answer window), so an uninstalled-server or crashed app costs you almost nothing.
 
 ### Floating panel
@@ -101,7 +105,7 @@ Clicking **Install Permission Hook** from the gear menu rewrites `~/.claude/sett
 {
   "hooks": {
     "PreToolUse": [{
-      "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|Task",
+      "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|ExitPlanMode|AskUserQuestion|mcp__.*",
       "hooks": [{ "type": "command", "command": ".../permission-bridge.sh", "timeout": 120 }],
       "_source": "claude-sessions-menubar"
     }],
@@ -115,7 +119,7 @@ Clicking **Install Permission Hook** from the gear menu rewrites `~/.claude/sett
 
 - **`_source` stamp** lets the app find its own entries without touching yours. Uninstall removes only stamped entries.
 - **Upgrade-on-launch**: if you already installed the hook, the app re-stamps its entries on every launch so matcher/timeout changes ship with app updates without a manual reinstall.
-- **Auto-allowed tools** (Read, Grep, Glob, LS) are deliberately excluded from the matcher so the menubar isn't spammed with prompts you'd never want to see.
+- **Explicit matcher, not `*`** — the list covers every tool Claude Code would prompt on, including all MCP tools. Read/Grep/Glob/LS are deliberately excluded so the bridge never even runs for silent auto-allowed reads, and a brand-new tool we don't list simply falls back to Claude Code's own prompt (the safe default).
 - **Settings file safety** — if `settings.json` exists but isn't valid JSON, Install refuses rather than overwriting.
 
 ### Status rules
@@ -217,7 +221,7 @@ ClaudeSessions/
 
 ## Caveats / not yet supported
 
-- **Permission rule matcher** handles bare tool names and `Bash(prefix:*)` only. Path globs, URL patterns, and nested specs fall through to the UI (which is usually the right default).
+- **Permission rule matcher** handles bare tool names, tool-name globs (`mcp__server__*`), `Bash(prefix:*)`, `WebFetch(domain:host)`, and file-path globs (`Edit(/src/**)`). Globs are kept narrower-or-equal to Claude Code's own interpretation; anything unrecognized falls through to the UI (the safe default). "Always Allow" only writes rules in these matcher-recognized forms, so a persisted rule always auto-resolves next time.
 - **No send-message fallback** for sessions without an active bridge. The `paperplane` button only appears when `bridgeSessionId` is set (i.e. you've run `/remote-control`). AppleScript keystroke injection was considered but deliberately skipped — too fragile.
 - **Per-tab precision** only works for iTerm2 and Terminal.app. Cursor/VSCode get correct-window precision (via the IDE lock files + AX). Warp, Ghostty, WezTerm get app-level activation only.
 - **Subagent transcripts** (under `<sessionId>/subagents/`) aren't aggregated in the main timeline yet — only the parent session's transcript is shown.
