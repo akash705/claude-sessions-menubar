@@ -105,6 +105,7 @@ private struct AllPill: View {
         }
         .buttonStyle(.plain)
         .pointerCursor()
+        .help("Show sessions of every status")
     }
 }
 
@@ -143,5 +144,6 @@ private struct DotPill: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .opacity(count == 0 ? 0.55 : 1.0)
+        .help(isOn ? "Hide \(label) sessions from the list" : "Show \(label) sessions in the list")
     }
 }

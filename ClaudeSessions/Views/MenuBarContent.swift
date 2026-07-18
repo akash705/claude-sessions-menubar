@@ -130,6 +130,7 @@ struct MenuBarContentBody: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
+                .help("Clear the search text")
             }
         }
         .padding(.horizontal, 10)
@@ -168,7 +169,7 @@ struct MenuBarContentBody: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .help("Refresh")
+            .help("Rescan and refresh the session list now")
         }
         .padding(.horizontal, 12)
         .padding(.top, 12)
@@ -340,6 +341,7 @@ struct MenuBarContentBody: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .help("Settings — permission hook, panel behavior, and quit")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

@@ -175,9 +175,11 @@ struct SessionRow: View {
                     }
                     .buttonStyle(PillActionStyle(tint: .gray, prominent: false))
                     .pointerCursor()
+                    .help("Go back without answering the request")
                     Button("Send Deny") { commitDeny() }
                         .buttonStyle(PillActionStyle(tint: .red, prominent: true))
                         .pointerCursor()
+                        .help("Deny the call and send this reason back to Claude")
                 }
             }
         } else {
@@ -185,6 +187,7 @@ struct SessionRow: View {
                 Button("Allow") { onAllow?() }
                     .buttonStyle(PillActionStyle(tint: .green, prominent: true))
                     .pointerCursor()
+                    .help("Allow this tool call once")
                 if let onAlwaysAllow {
                     Button("Always") { onAlwaysAllow() }
                         .buttonStyle(PillActionStyle(tint: .blue, prominent: false))
@@ -194,6 +197,7 @@ struct SessionRow: View {
                 Button("Deny") { showingDenyField = true }
                     .buttonStyle(PillActionStyle(tint: .red, prominent: false))
                     .pointerCursor()
+                    .help("Deny this call — you can add a reason for Claude")
             }
         }
     }

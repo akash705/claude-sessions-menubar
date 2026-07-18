@@ -209,6 +209,7 @@ private struct PermissionBanner: View {
                         } label: {
                             Label("Focus terminal", systemImage: "terminal")
                         }
+                        .help("Bring the terminal running this session to the front to answer")
                     }
                     if let url = session.bridgeURL {
                         Button {
@@ -216,6 +217,7 @@ private struct PermissionBanner: View {
                         } label: {
                             Label("Open bridge", systemImage: "paperplane")
                         }
+                        .help("Open this session on claude.ai to reply from the browser")
                     }
                 }
                 .controlSize(.small)
