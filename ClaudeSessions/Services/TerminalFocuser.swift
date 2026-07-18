@@ -51,6 +51,99 @@ enum TerminalFocuser {
         hostAppName(forPid: session.pid)
     }
 
+    // MARK: - Resume an ended session
+
+    /// Terminal app to launch `claude --resume` in. User-configurable.
+    enum ResumeTerminal: String, CaseIterable {
+        case terminal = "Terminal"
+        case iterm = "iTerm2"
+        // `switch` (not a ternary) so adding a case forces a label here.
+        var displayName: String {
+            switch self {
+            case .terminal: return "Terminal.app"
+            case .iterm:    return "iTerm2"
+            }
+        }
+    }
+
+    /// Opens a new terminal window and runs `claude --resume <sessionId>` in
+    /// the session's cwd. For done/old sessions that no longer have a live
+    /// process to focus — a fresh terminal is the only way back in.
+    static func resumeInTerminal(_ session: Session, using terminal: ResumeTerminal) {
+        // Fall back to home if the recorded cwd is gone (project moved/deleted)
+        // so `cd` doesn't fail and leave the user in an unexpected directory.
+        var isDir: ObjCBool = false
+        let cwdExists = FileManager.default.fileExists(atPath: session.cwd, isDirectory: &isDir) && isDir.boolValue
+        let dir = cwdExists ? session.cwd : FileManager.default.homeDirectoryForCurrentUser.path
+        if !cwdExists {
+            NSLog("[ClaudeSessions] resumeInTerminal: cwd \(session.cwd) missing, using home")
+        }
+        let command = "cd \(shellQuote(dir)) && claude --resume \(shellQuote(session.id))"
+        let error: NSDictionary?
+        switch terminal {
+        case .terminal: error = runAppleScript(terminalResumeScript(command: command))
+        case .iterm:    error = runAppleScript(itermResumeScript(command: command))
+        }
+        if let error { presentResumeFailure(error, terminal: terminal) }
+    }
+
+    /// A resume that silently no-ops is a debugging trap — the two common
+    /// failures are the chosen terminal not being installed and macOS
+    /// Automation (TCC) consent being declined. Tell the user which it is.
+    private static func presentResumeFailure(_ err: NSDictionary, terminal: ResumeTerminal) {
+        let code = (err[NSAppleScript.errorNumber] as? Int) ?? 0
+        let brief = (err[NSAppleScript.errorBriefMessage] as? String)
+            ?? (err[NSAppleScript.errorMessage] as? String)
+            ?? "Unknown error."
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Couldn't resume in \(terminal.displayName)"
+        // -1743 = errAEEventNotPermitted: not authorized to send Apple events.
+        if code == -1743 {
+            alert.informativeText = "Claude Sessions isn't allowed to control \(terminal.displayName). Grant it in System Settings → Privacy & Security → Automation, then try again."
+        } else {
+            alert.informativeText = "\(brief)\n\nIf \(terminal.displayName) isn't installed, pick a different terminal in the gear menu (Resume terminal)."
+        }
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    /// Single-quote a string for safe use in a POSIX shell command line.
+    private static func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Escape a string for embedding inside an AppleScript double-quoted
+    /// literal (backslash first, then quote).
+    private static func appleScriptQuote(_ s: String) -> String {
+        let escaped = s
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    private static func terminalResumeScript(command: String) -> String {
+        """
+        tell application "Terminal"
+            activate
+            do script \(appleScriptQuote(command))
+        end tell
+        """
+    }
+
+    private static func itermResumeScript(command: String) -> String {
+        """
+        tell application "iTerm"
+            activate
+            set newWindow to (create window with default profile)
+            tell current session of newWindow
+                write text \(appleScriptQuote(command))
+            end tell
+        end tell
+        """
+    }
+
     /// Resolves the hosting `.app` name for a pid. Walks the process tree —
     /// safe to call off the main thread, but expensive enough that callers
     /// should cache the result rather than calling per UI render.
@@ -111,16 +204,21 @@ enum TerminalFocuser {
 
     // MARK: - AppleScript
 
-    private static func runAppleScript(_ source: String) {
+    /// Runs the script and returns the AppleScript error dictionary on
+    /// failure (nil on success), so callers that need to tell the user why
+    /// nothing happened can act on it.
+    @discardableResult
+    private static func runAppleScript(_ source: String) -> NSDictionary? {
         var err: NSDictionary?
         guard let script = NSAppleScript(source: source) else {
             NSLog("[ClaudeSessions] AppleScript failed to compile")
-            return
+            return [NSAppleScript.errorMessage: "Script failed to compile"] as NSDictionary
         }
         _ = script.executeAndReturnError(&err)
         if let err {
             NSLog("[ClaudeSessions] AppleScript error: \(err)")
         }
+        return err
     }
 
     private static func iTermScript(tty: String) -> String {

@@ -43,6 +43,11 @@ struct MenuBarContent: View {
             }
         )
         .frame(width: 480, height: 560)
+        // Track popover visibility so the permission handler can skip
+        // force-opening the floating panel while the popover already shows
+        // the card. Lives on the shim (popover only), never the shared body.
+        .onAppear { store.isPopoverVisible = true }
+        .onDisappear { store.isPopoverVisible = false }
     }
 }
 
@@ -77,6 +82,10 @@ struct MenuBarContentBody: View {
         if session.pid != nil {
             Button("Focus Terminal" + (session.hostAppName.map { " (\($0))" } ?? "")) {
                 TerminalFocuser.focusTerminal(for: session)
+            }
+        } else {
+            Button("Resume in Terminal (\(store.resumeTerminalApp.displayName))") {
+                TerminalFocuser.resumeInTerminal(session, using: store.resumeTerminalApp)
             }
         }
         Button("Open History") { openHistory(session.id) }
@@ -125,6 +134,7 @@ struct MenuBarContentBody: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
+                .help("Clear the search text")
             }
         }
         .padding(.horizontal, 10)
@@ -163,7 +173,7 @@ struct MenuBarContentBody: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .help("Refresh")
+            .help("Rescan and refresh the session list now")
         }
         .padding(.horizontal, 12)
         .padding(.top, 12)
@@ -173,14 +183,16 @@ struct MenuBarContentBody: View {
     private var list: some View {
         let items = store.filteredSessions
         let others = store.otherTabSearchResults
-        // Pending permission rows surface regardless of the current filter
+        // Pending permission cards surface regardless of the current filter
         // — otherwise a request on a hidden session would silently time out.
-        let pendingSessions = store.sessions.filter { store.pendingPermissions[$0.id] != nil }
-        let pendingIds = Set(pendingSessions.map(\.id))
+        // A session can hold several requests at once, so we render one card
+        // per pending (oldest first) rather than one per session.
+        let pendingPairs = pendingPermissionPairs()
+        let pendingIds = Set(pendingPairs.map(\.session.id))
         let mainItems = items.filter { !pendingIds.contains($0.id) }
         let otherItems = others.filter { !pendingIds.contains($0.id) }
         return Group {
-            if pendingSessions.isEmpty && mainItems.isEmpty && otherItems.isEmpty {
+            if pendingPairs.isEmpty && mainItems.isEmpty && otherItems.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "tray")
                         .font(.title2)
@@ -193,8 +205,8 @@ struct MenuBarContentBody: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        if !pendingSessions.isEmpty {
-                            sectionView(header: "Needs attention", sessions: pendingSessions, accent: true)
+                        if !pendingPairs.isEmpty {
+                            pendingSection(pairs: pendingPairs)
                         }
                         ForEach(grouped(mainItems), id: \.project) { bucket in
                             sectionView(header: bucket.project, sessions: bucket.sessions)
@@ -210,47 +222,92 @@ struct MenuBarContentBody: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Flattens the pending-permission map into (session, pending) pairs.
+    /// A session can hold several concurrent requests; each becomes its own
+    /// card, ordered oldest-first so the queue reads top-to-bottom.
+    private func pendingPermissionPairs() -> [(session: Session, pending: PendingPermission)] {
+        let sessionsById = Dictionary(store.sessions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return store.pendingPermissions.values
+            .sorted { $0.receivedAt < $1.receivedAt }
+            .compactMap { pending in
+                sessionsById[pending.sessionId].map { (session: $0, pending: pending) }
+            }
+    }
+
     @ViewBuilder
-    private func sectionView(header: String, sessions: [Session], accent: Bool = false) -> some View {
+    private func pendingSection(pairs: [(session: Session, pending: PendingPermission)]) -> some View {
         Section {
-            ForEach(sessions) { session in
-                let pending = store.pendingPermissions[session.id]
+            ForEach(pairs, id: \.pending.id) { pair in
+                let session = pair.session
+                let pending = pair.pending
                 // Wire Allow/Deny only when the in-app decision is on AND the
                 // bridge is still alive. Once the card has expired (bridge
                 // curl timed out, Claude Code fell back to the terminal),
                 // the buttons can't reach anyone — leave them unwired so
                 // SessionRow shows the "answer in terminal" variant.
-                let interactive = store.showPermissionButtons && !(pending?.expired ?? false)
+                // AskUserQuestion can't be answered by a hook, so it always
+                // renders informational (the terminal owns the real picker).
+                let interactive = store.showPermissionButtons && !pending.expired && pending.kind != .ask
+                // Only offer "Always Allow" when a specific, safe rule can be
+                // derived — otherwise it would mean a blanket grant.
+                let canAlwaysAllow = interactive && HookInstaller.allowRule(for: pending) != nil
                 SessionRow(
                     session: session,
                     pendingPermission: pending,
                     onAllow: interactive
-                        ? { store.resolvePermission(sessionId: session.id, decision: .allow) }
+                        ? { store.resolvePermission(id: pending.id, decision: .allow) }
                         : nil,
                     onDeny: interactive
-                        ? { store.resolvePermission(sessionId: session.id, decision: .deny) }
+                        ? { reason in store.resolvePermission(id: pending.id, decision: .deny, reason: reason) }
+                        : nil,
+                    onAlwaysAllow: canAlwaysAllow
+                        ? { store.resolvePermissionAlways(id: pending.id) }
                         : nil,
                     onOpenHistory: { openHistory(session.id) },
                     onFocusTerminal: { TerminalFocuser.focusTerminal(for: session) },
-                    onDismiss: { store.dismissPermission(sessionId: session.id) }
+                    onDismiss: { store.dismissPermission(id: pending.id) }
+                )
+                .contextMenu { rowMenu(for: session) }
+            }
+        } header: {
+            sectionHeaderLabel("Needs attention", accent: true)
+        }
+    }
+
+    @ViewBuilder
+    private func sectionView(header: String, sessions: [Session], accent: Bool = false) -> some View {
+        Section {
+            ForEach(sessions) { session in
+                SessionRow(
+                    session: session,
+                    onOpenHistory: { openHistory(session.id) },
+                    onResume: session.pid == nil
+                        ? { TerminalFocuser.resumeInTerminal(session, using: store.resumeTerminalApp) }
+                        : nil,
+                    onFocusTerminal: { TerminalFocuser.focusTerminal(for: session) }
                 )
                 .onTapGesture { primaryTap(on: session) }
                 .contextMenu { rowMenu(for: session) }
             }
         } header: {
-            HStack {
-                Text(header)
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1.0)
-                    .foregroundStyle(accent ? Color.accentColor : .secondary)
-                    .textCase(.uppercase)
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 4)
-            .background(.bar)
+            sectionHeaderLabel(header, accent: accent)
         }
+    }
+
+    @ViewBuilder
+    private func sectionHeaderLabel(_ header: String, accent: Bool) -> some View {
+        HStack {
+            Text(header)
+                .font(.system(size: 10, weight: .bold))
+                .tracking(1.0)
+                .foregroundStyle(accent ? Color.accentColor : .secondary)
+                .textCase(.uppercase)
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+        .background(.bar)
     }
 
     private var footer: some View {
@@ -271,6 +328,12 @@ struct MenuBarContentBody: View {
                     .help("When off, permission cards are informational only — answer in your terminal.")
                 Toggle("Always Open Floating Panel", isOn: $store.autoOpenFloatingPanel)
                     .help("When on, the floating panel opens automatically for every attention event. When off, it only opens for permissions if Allow/Deny in App is enabled.")
+                Picker("Resume terminal", selection: $store.resumeTerminalApp) {
+                    ForEach(TerminalFocuser.ResumeTerminal.allCases, id: \.self) { term in
+                        Text(term.displayName).tag(term)
+                    }
+                }
+                .help("Which terminal ‘Resume in Terminal’ opens ended sessions in.")
                 Divider()
                 if HookInstaller.isHookInstalled() {
                     Button("Uninstall Permission Hook") {
@@ -291,6 +354,7 @@ struct MenuBarContentBody: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .help("Settings — permission hook, panel behavior, and quit")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
