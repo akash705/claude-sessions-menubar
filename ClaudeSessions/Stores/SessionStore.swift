@@ -56,6 +56,14 @@ final class SessionStore: ObservableObject {
     @Published var autoOpenFloatingPanel: Bool = UserDefaults.standard.bool(forKey: "autoOpenFloatingPanel") {
         didSet { UserDefaults.standard.set(autoOpenFloatingPanel, forKey: "autoOpenFloatingPanel") }
     }
+    /// Which terminal "Resume in Terminal" launches ended sessions in.
+    /// Defaults to Terminal.app (always present); persisted across launches.
+    @Published var resumeTerminalApp: TerminalFocuser.ResumeTerminal = {
+        let raw = UserDefaults.standard.string(forKey: "resumeTerminalApp") ?? ""
+        return TerminalFocuser.ResumeTerminal(rawValue: raw) ?? .terminal
+    }() {
+        didSet { UserDefaults.standard.set(resumeTerminalApp.rawValue, forKey: "resumeTerminalApp") }
+    }
     /// Permission requests held by the bridge hook, keyed by the pending's
     /// `id`. Keyed by id (not sessionId) so a single session can have several
     /// requests in flight at once — routine when Claude batches tool calls or
@@ -420,6 +428,7 @@ final class SessionStore: ObservableObject {
     private func matchesSearch(_ s: Session) -> Bool {
         let needle = trimmedNeedle
         if needle.isEmpty { return true }
+        if let name = s.userName, name.lowercased().contains(needle) { return true }
         if s.projectLabel.lowercased().contains(needle) { return true }
         if s.cwd.lowercased().contains(needle) { return true }
         if s.lastMessagePreview.lowercased().contains(needle) { return true }

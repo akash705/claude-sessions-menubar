@@ -13,6 +13,9 @@ struct SessionRow: View {
     /// Only wired when a specific, safe rule can be derived for the tool.
     var onAlwaysAllow: (() -> Void)? = nil
     var onOpenHistory: (() -> Void)? = nil
+    /// Resume an ended session in a new terminal (`claude --resume`). Wired
+    /// only for sessions with no live process — live ones focus instead.
+    var onResume: (() -> Void)? = nil
     /// Called when the user taps the permission card anywhere outside the
     /// Allow/Deny buttons — lets them hop to the terminal to inspect/answer
     /// in context rather than deciding blind from the menubar.
@@ -54,9 +57,20 @@ struct SessionRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(session.projectLabel)
+                    Text(session.displayTitle)
                         .font(.system(size: 12, weight: .semibold))
                         .lineLimit(1)
+                    // When a user-set name is the title, keep the project
+                    // folder visible as a smaller secondary tag.
+                    if session.userName != nil {
+                        Text(session.projectLabel)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.primary.opacity(0.06)))
+                    }
                     Text("#\(session.id.prefix(6))")
                         .font(.system(size: 10).monospacedDigit())
                         .foregroundStyle(.tertiary)
@@ -86,6 +100,21 @@ struct SessionRow: View {
                 }
             }
 
+            if let onResume {
+                Button {
+                    onResume()
+                } label: {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help("Resume this session in a new terminal (claude --resume)")
+            }
+
             Button {
                 onOpenHistory?()
             } label: {
@@ -108,7 +137,7 @@ struct SessionRow: View {
     private var permissionCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Text(session.projectLabel)
+                Text(session.displayTitle)
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                 if let pid = session.pid {

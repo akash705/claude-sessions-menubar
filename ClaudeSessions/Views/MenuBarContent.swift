@@ -83,6 +83,10 @@ struct MenuBarContentBody: View {
             Button("Focus Terminal" + (session.hostAppName.map { " (\($0))" } ?? "")) {
                 TerminalFocuser.focusTerminal(for: session)
             }
+        } else {
+            Button("Resume in Terminal (\(store.resumeTerminalApp.displayName))") {
+                TerminalFocuser.resumeInTerminal(session, using: store.resumeTerminalApp)
+            }
         }
         Button("Open History") { openHistory(session.id) }
         if let url = session.bridgeURL {
@@ -277,6 +281,9 @@ struct MenuBarContentBody: View {
                 SessionRow(
                     session: session,
                     onOpenHistory: { openHistory(session.id) },
+                    onResume: session.pid == nil
+                        ? { TerminalFocuser.resumeInTerminal(session, using: store.resumeTerminalApp) }
+                        : nil,
                     onFocusTerminal: { TerminalFocuser.focusTerminal(for: session) }
                 )
                 .onTapGesture { primaryTap(on: session) }
@@ -321,6 +328,12 @@ struct MenuBarContentBody: View {
                     .help("When off, permission cards are informational only — answer in your terminal.")
                 Toggle("Always Open Floating Panel", isOn: $store.autoOpenFloatingPanel)
                     .help("When on, the floating panel opens automatically for every attention event. When off, it only opens for permissions if Allow/Deny in App is enabled.")
+                Picker("Resume terminal", selection: $store.resumeTerminalApp) {
+                    ForEach(TerminalFocuser.ResumeTerminal.allCases, id: \.self) { term in
+                        Text(term.displayName).tag(term)
+                    }
+                }
+                .help("Which terminal ‘Resume in Terminal’ opens ended sessions in.")
                 Divider()
                 if HookInstaller.isHookInstalled() {
                     Button("Uninstall Permission Hook") {

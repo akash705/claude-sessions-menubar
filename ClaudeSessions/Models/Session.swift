@@ -42,6 +42,9 @@ struct Session: Identifiable, Hashable {
     /// Computed once on the scan queue and cached, so views never block the
     /// main thread on process-tree walks.
     let hostAppName: String?
+    /// User-assigned session name (live sessions only; nil for auto-named or
+    /// ended sessions). When set, it's the most human-recognizable label.
+    let userName: String?
 
     var bridgeURL: URL? {
         guard let b = bridgeSessionId, !b.isEmpty else { return nil }
@@ -59,4 +62,8 @@ struct Session: Identifiable, Hashable {
             ?? (projectPath.split(separator: "/").last.map(String.init))
             ?? projectDirName
     }
+
+    /// The row's primary label: the user's session name when they set one,
+    /// otherwise the project folder.
+    var displayTitle: String { userName ?? projectLabel }
 }

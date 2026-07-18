@@ -59,7 +59,8 @@ enum SessionScanner {
                     pendingTool: summary.pendingTool,
                     permissionMode: summary.permissionMode,
                     bridgeSessionId: liveRec?.bridgeSessionId,
-                    hostAppName: hostAppName
+                    hostAppName: hostAppName,
+                    userName: liveRec?.userName
                 )
                 sessions.append(session)
             }

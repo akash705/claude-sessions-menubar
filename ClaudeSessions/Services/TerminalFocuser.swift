@@ -51,6 +51,69 @@ enum TerminalFocuser {
         hostAppName(forPid: session.pid)
     }
 
+    // MARK: - Resume an ended session
+
+    /// Terminal app to launch `claude --resume` in. User-configurable.
+    enum ResumeTerminal: String, CaseIterable {
+        case terminal = "Terminal"
+        case iterm = "iTerm2"
+        var displayName: String { self == .terminal ? "Terminal.app" : "iTerm2" }
+    }
+
+    /// Opens a new terminal window and runs `claude --resume <sessionId>` in
+    /// the session's cwd. For done/old sessions that no longer have a live
+    /// process to focus — a fresh terminal is the only way back in.
+    static func resumeInTerminal(_ session: Session, using terminal: ResumeTerminal) {
+        // Fall back to home if the recorded cwd is gone (project moved/deleted)
+        // so `cd` doesn't fail and leave the user in an unexpected directory.
+        var isDir: ObjCBool = false
+        let cwdExists = FileManager.default.fileExists(atPath: session.cwd, isDirectory: &isDir) && isDir.boolValue
+        let dir = cwdExists ? session.cwd : FileManager.default.homeDirectoryForCurrentUser.path
+        if !cwdExists {
+            NSLog("[ClaudeSessions] resumeInTerminal: cwd \(session.cwd) missing, using home")
+        }
+        let command = "cd \(shellQuote(dir)) && claude --resume \(shellQuote(session.id))"
+        switch terminal {
+        case .terminal: runAppleScript(terminalResumeScript(command: command))
+        case .iterm:    runAppleScript(itermResumeScript(command: command))
+        }
+    }
+
+    /// Single-quote a string for safe use in a POSIX shell command line.
+    private static func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Escape a string for embedding inside an AppleScript double-quoted
+    /// literal (backslash first, then quote).
+    private static func appleScriptQuote(_ s: String) -> String {
+        let escaped = s
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    private static func terminalResumeScript(command: String) -> String {
+        """
+        tell application "Terminal"
+            activate
+            do script \(appleScriptQuote(command))
+        end tell
+        """
+    }
+
+    private static func itermResumeScript(command: String) -> String {
+        """
+        tell application "iTerm"
+            activate
+            set newWindow to (create window with default profile)
+            tell current session of newWindow
+                write text \(appleScriptQuote(command))
+            end tell
+        end tell
+        """
+    }
+
     /// Resolves the hosting `.app` name for a pid. Walks the process tree —
     /// safe to call off the main thread, but expensive enough that callers
     /// should cache the result rather than calling per UI render.
