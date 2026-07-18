@@ -75,6 +75,11 @@ struct PendingPermission: Identifiable, Equatable {
         }
     }
 
+    /// Total edit entries in the payload, including any `edits` dropped as
+    /// malformed. A consent card can compare this against `edits.count` to
+    /// warn when the previewed diff is silently incomplete.
+    var rawEditCount: Int { (toolInput["edits"] as? [[String: Any]])?.count ?? 0 }
+
     /// For `mcp__server__tool`, splits out the server and tool components.
     /// `("server", "tool")` — either may be empty if the name is malformed.
     var mcpComponents: (server: String, tool: String)? {

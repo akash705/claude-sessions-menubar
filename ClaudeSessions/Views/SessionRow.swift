@@ -293,6 +293,13 @@ struct SessionRow: View {
                 Text("\(edits.count) edit\(edits.count == 1 ? "" : "s")")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
+                // Don't let a silently-partial preview mislead the approval.
+                let dropped = pending.rawEditCount - edits.count
+                if dropped > 0 {
+                    Text("⚠︎ \(dropped) edit\(dropped == 1 ? "" : "s") couldn't be previewed")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.orange)
+                }
                 if let first = edits.first {
                     diffView(old: first.old, new: first.new)
                 }
@@ -400,9 +407,19 @@ struct SessionRow: View {
         return String(s.prefix(maxChars)) + "\n… (truncated)"
     }
 
+    /// Decoded thumbnails keyed by "path@maxPixel". The permission card's body
+    /// re-evaluates on every store change (blink timer ~2×/s) and every
+    /// deny-reason keystroke; without this the ImageIO decode would re-run on
+    /// the main thread each time and jank the UI. NSCache is thread-safe and
+    /// self-evicting under memory pressure. Screenshots are immutable temp
+    /// files, so caching by path can't go stale in practice.
+    private static let thumbnailCache = NSCache<NSString, NSImage>()
+
     /// Downscaled thumbnail via ImageIO — avoids loading a full-resolution
-    /// screenshot into memory just to show a 120pt preview.
+    /// screenshot into memory just to show a 120pt preview. Cached per path.
     private static func thumbnail(path: String, maxPixel: CGFloat = 240) -> NSImage? {
+        let key = "\(path)@\(maxPixel)" as NSString
+        if let cached = thumbnailCache.object(forKey: key) { return cached }
         guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else {
             return nil
         }
@@ -414,7 +431,9 @@ struct SessionRow: View {
         guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else {
             return nil
         }
-        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        let image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        thumbnailCache.setObject(image, forKey: key)
+        return image
     }
 }
 

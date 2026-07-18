@@ -243,9 +243,11 @@ final class SessionStore: ObservableObject {
     }
 
     /// Dismisses an informational card. Used by the X button on cards
-    /// rendered when `showPermissionButtons == false` — there's no
-    /// resolver to call (we already responded `ask` to the hook) so this
-    /// just removes the UI entry.
+    /// rendered informationally — either because Allow/Deny-in-app is off, or
+    /// because the tool is AskUserQuestion (which a hook can't answer, so it's
+    /// informational even in interactive mode). There's no resolver to call
+    /// (we already responded `ask` to the hook) so this just removes the UI
+    /// entry.
     func dismissPermission(id: UUID) {
         pendingPermissions.removeValue(forKey: id)
         closePanelIfAutoSurfacedForPermission()
@@ -301,9 +303,9 @@ final class SessionStore: ObservableObject {
         blinkStopTimer = nil
         permissionServer?.stop()
         permissionServer = nil
-        // Anyone still waiting on us must be unblocked, or the hook hangs
-        // until the 600s Claude Code timeout. Hand control back to the
-        // built-in prompt rather than silently allowing or denying.
+        // Anyone still waiting on us must be unblocked, or the hook stays
+        // parked until the bridge's curl deadline (~30s). Hand control back to
+        // the built-in prompt rather than silently allowing or denying.
         for (_, resolve) in pendingResolvers { resolve(.ask, nil) }
         pendingResolvers.removeAll()
         pendingPermissions.removeAll()

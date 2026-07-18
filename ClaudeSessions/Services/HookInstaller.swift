@@ -121,7 +121,15 @@ enum HookInstaller {
     /// Best-effort; errors swallowed.
     static func upgradeInstalledHookIfNeeded() {
         guard isHookInstalled() else { return }
-        try? installHook()
+        // This is the only delivery path for matcher/timeout changes on an
+        // already-installed hook. Swallowing the error would silently strand
+        // the user on an old matcher — e.g. newly-gated MCP tools bypassing
+        // the prompt — so log it rather than dropping it.
+        do {
+            try installHook()
+        } catch {
+            NSLog("[ClaudeSessions] upgradeInstalledHookIfNeeded failed: \(error.localizedDescription)")
+        }
     }
 
     static func uninstallHook() throws {
@@ -297,7 +305,19 @@ enum HookInstaller {
         let target = allowRuleTargetPath(cwd: cwd)
         var settings = try readSettingsStrict(at: target) ?? [:]
         var permissions = try dict(settings, "permissions") ?? [:]
-        var allow = (permissions["allow"] as? [String]) ?? []
+        // Throw rather than clobber if `allow` exists but isn't a [String],
+        // matching the shape discipline `dict`/`hookList` use elsewhere —
+        // otherwise `as? [String] ?? []` would silently replace the user's
+        // existing rules with just this one.
+        var allow: [String]
+        if let existing = permissions["allow"] {
+            guard let arr = existing as? [String] else {
+                throw InstallError.settingsShapeUnexpected("permissions.allow")
+            }
+            allow = arr
+        } else {
+            allow = []
+        }
         guard !allow.contains(rule) else { return }
         allow.append(rule)
         permissions["allow"] = allow

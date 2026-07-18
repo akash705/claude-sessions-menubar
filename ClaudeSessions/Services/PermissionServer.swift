@@ -287,13 +287,23 @@ final class PermissionServer: @unchecked Sendable {
     private static let tokenFile = portDir.appendingPathComponent("token")
 
     private func publishPort(_ port: UInt16) {
-        try? FileManager.default.createDirectory(at: Self.portDir, withIntermediateDirectories: true)
-        // Token first, so a bridge that reads a fresh port always finds a
-        // matching token already on disk. Written 0600 (not the default) since
-        // it gates the server.
-        try? token.write(to: Self.tokenFile, atomically: true, encoding: .utf8)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.tokenFile.path)
-        try? "\(port)\n".write(to: Self.portFile, atomically: true, encoding: .utf8)
+        do {
+            try FileManager.default.createDirectory(at: Self.portDir, withIntermediateDirectories: true)
+            // Token first, so a bridge that reads a fresh port always finds a
+            // matching token already on disk. Written 0600 (not the default)
+            // since it gates the server. If the token can't be written we must
+            // NOT publish the port — a port without a matching token makes the
+            // bridge send an empty token, the server 403s, and the whole in-app
+            // permission UX silently stops working. Better to leave no port.
+            try token.write(to: Self.tokenFile, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.tokenFile.path)
+            try "\(port)\n".write(to: Self.portFile, atomically: true, encoding: .utf8)
+        } catch {
+            NSLog("[ClaudeSessions] PermissionServer.publishPort failed: \(error.localizedDescription) — in-app permission prompts will not work until this succeeds")
+            // Roll back any partial state so a stale token/port pair can't linger.
+            try? FileManager.default.removeItem(at: Self.portFile)
+            try? FileManager.default.removeItem(at: Self.tokenFile)
+        }
     }
 
     private func unpublishPort() {

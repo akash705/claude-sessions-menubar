@@ -19,7 +19,7 @@ See which sessions are running, answer Allow/Deny without leaving your current w
 
 ### Permission prompts in the menubar
 
-- **PreToolUse hook bridge** — when Claude wants to run a tool that would prompt (Bash, Write, Edit/MultiEdit, WebFetch, WebSearch, Task, ExitPlanMode, AskUserQuestion, **and every MCP `mcp__…` tool**), you get a native card in the app instead of the terminal prompt. Read/Grep/Glob/LS stay excluded so silent auto-allowed reads never spawn the bridge.
+- **PreToolUse hook bridge** — when Claude wants to run a tool that would prompt (Bash, Write, Edit/MultiEdit, NotebookEdit, WebFetch, WebSearch, Task, ExitPlanMode, AskUserQuestion, **and every MCP `mcp__…` tool**), you get a native card in the app instead of the terminal prompt. Read/Grep/Glob/LS stay excluded so silent auto-allowed reads never spawn the bridge.
 - **Rich per-tool cards** — each card renders detail for its tool: the full Bash command, an Edit/MultiEdit old→new diff, a Write file + content preview, WebFetch url + prompt, an MCP `server › tool` header with parameters, or a generic key/value list. Local image paths (e.g. a pasted screenshot) render as inline thumbnails.
 - **Allow / Deny in-app** — one click resolves the prompt. Claude never blocks on the terminal prompt you'd otherwise have to tab to. **Multiple concurrent requests** on one session each get their own card.
 - **Always Allow** — persists a narrow, matcher-compatible rule to the project's `settings.local.json` so identical calls stop prompting (the exact rule is shown on hover). Offered only where a *specific* rule can be derived (MCP tool, WebFetch domain, exact file path); Bash and blanket-only tools are deliberately excluded.

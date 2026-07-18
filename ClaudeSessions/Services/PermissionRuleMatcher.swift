@@ -67,10 +67,17 @@ enum PermissionRuleMatcher {
 
         var merged = Rules(allow: [], deny: [])
         for path in paths {
-            guard let data = try? Data(contentsOf: path),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let permissions = obj["permissions"] as? [String: Any]
-            else { continue }
+            // A missing file is expected (not every scope has settings); a
+            // file that exists but won't parse is NOT — silently skipping it
+            // drops the user's allow AND deny rules (a deny meant to block a
+            // dangerous tool would stop being enforced with no warning). Log
+            // the corrupt path so the failure is visible.
+            guard let data = try? Data(contentsOf: path) else { continue }
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                NSLog("[ClaudeSessions] PermissionRuleMatcher: \(path.path) is not valid JSON — its allow/deny rules are being ignored")
+                continue
+            }
+            guard let permissions = obj["permissions"] as? [String: Any] else { continue }
             if let allow = permissions["allow"] as? [String] { merged.allow.append(contentsOf: allow) }
             if let deny = permissions["deny"] as? [String] { merged.deny.append(contentsOf: deny) }
         }
