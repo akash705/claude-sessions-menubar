@@ -64,6 +64,19 @@ final class SessionStore: ObservableObject {
     /// response goes back).
     @Published private(set) var pendingPermissions: [UUID: PendingPermission] = [:]
 
+    /// Whether the MenuBarExtra popover is currently on screen. Set by the
+    /// popover shim's `.onAppear`/`.onDisappear` (never the floating panel,
+    /// which reuses the same body). When the popover is up it already shows
+    /// the permission card, so we skip force-opening the floating panel and
+    /// avoid the same card appearing in two windows.
+    var isPopoverVisible = false
+
+    /// True when a permission force-opened the floating panel that the user
+    /// had previously closed. Lets us auto-close it again once the last
+    /// pending permission is answered — but only a panel *we* popped, never
+    /// one the user had open themselves.
+    private var panelAutoSurfacedForPermission = false
+
     private let scanQueue = DispatchQueue(label: "SessionStore.scan", qos: .utility)
     private var watcher: FileWatcher?
     private var tickTimer: Timer?
@@ -134,9 +147,20 @@ final class SessionStore: ObservableObject {
                 // Force-open if the user opted into always-open, or if the
                 // in-app Allow/Deny card is the only way to answer. In the
                 // informational mode (no buttons) the terminal prompt will
-                // handle it, so we don't pop up uninvited.
-                let force = self.autoOpenFloatingPanel || self.showPermissionButtons
+                // handle it, so we don't pop up uninvited. If the menubar
+                // popover is already up, it shows the card too — skip the
+                // floating panel so the same card isn't in two windows.
+                let wasOpen = self.isFloatingPanelOpen
+                let force = (self.autoOpenFloatingPanel || self.showPermissionButtons)
+                    && !self.isPopoverVisible
                 FloatingPanelController.shared.surfaceMainForAttention(store: self, force: force)
+                // Remember only a panel we popped from the closed state (and
+                // not when always-open is on), so we can auto-close it once
+                // the last permission is answered without touching a panel
+                // the user deliberately had open.
+                if force && !wasOpen && !self.autoOpenFloatingPanel {
+                    self.panelAutoSurfacedForPermission = true
+                }
                 // AskUserQuestion can't be answered by a hook (it returns no
                 // choice), so it's always informational — respond `ask` and let
                 // Claude Code's own picker run in the terminal.
@@ -179,6 +203,19 @@ final class SessionStore: ObservableObject {
         guard let resolve = pendingResolvers.removeValue(forKey: id) else { return }
         pendingPermissions.removeValue(forKey: id)
         resolve(decision, reason)
+        closePanelIfAutoSurfacedForPermission()
+    }
+
+    /// Closes the floating panel we auto-popped for a permission, once the
+    /// last pending permission is answered. No-op if the user had the panel
+    /// open before (flag never set), if always-open mode is on, or if other
+    /// permissions are still outstanding.
+    private func closePanelIfAutoSurfacedForPermission() {
+        guard panelAutoSurfacedForPermission,
+              pendingPermissions.isEmpty,
+              !autoOpenFloatingPanel else { return }
+        panelAutoSurfacedForPermission = false
+        FloatingPanelController.shared.hide()
     }
 
     /// Allows the request AND persists a matcher-compatible allow rule so the
@@ -203,6 +240,7 @@ final class SessionStore: ObservableObject {
     /// just removes the UI entry.
     func dismissPermission(id: UUID) {
         pendingPermissions.removeValue(forKey: id)
+        closePanelIfAutoSurfacedForPermission()
     }
 
     /// Drops the informational card after a short TTL. The user has
@@ -241,6 +279,7 @@ final class SessionStore: ObservableObject {
     fileprivate func dropPendingPermission(pendingId: UUID) {
         pendingResolvers.removeValue(forKey: pendingId)
         pendingPermissions.removeValue(forKey: pendingId)
+        closePanelIfAutoSurfacedForPermission()
     }
 
     func stop() {
@@ -453,6 +492,9 @@ final class SessionStore: ObservableObject {
     }
 
     func toggleFloatingPanel() {
+        // A manual toggle means the user is now driving the panel — don't
+        // auto-close it out from under them when a pending permission clears.
+        panelAutoSurfacedForPermission = false
         FloatingPanelController.shared.toggle(store: self)
     }
 }

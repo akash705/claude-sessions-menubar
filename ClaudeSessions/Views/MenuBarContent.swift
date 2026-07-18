@@ -43,6 +43,11 @@ struct MenuBarContent: View {
             }
         )
         .frame(width: 480, height: 560)
+        // Track popover visibility so the permission handler can skip
+        // force-opening the floating panel while the popover already shows
+        // the card. Lives on the shim (popover only), never the shared body.
+        .onAppear { store.isPopoverVisible = true }
+        .onDisappear { store.isPopoverVisible = false }
     }
 }
 
