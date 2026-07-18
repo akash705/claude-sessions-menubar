@@ -130,8 +130,8 @@ final class PermissionServer: @unchecked Sendable {
         }
 
         // Reject anything that doesn't carry our shared token — see `token`.
-        let presented = headerValue(headerText, "X-Menubar-Token")
-        guard presented == token else {
+        let presented = headerValue(headerText, "X-Menubar-Token") ?? ""
+        guard Self.constantTimeEquals(presented, token) else {
             self.respond(conn: conn, status: "403 Forbidden", body: Data())
             return
         }
@@ -264,6 +264,21 @@ final class PermissionServer: @unchecked Sendable {
         conn.send(content: out, completion: .contentProcessed { _ in
             conn.cancel()
         })
+    }
+
+    /// Byte-for-byte compare that doesn't branch on where the mismatch is, so
+    /// a network attacker timing responses can't narrow down the token one
+    /// byte at a time. The length check still leaks length, but that's fixed
+    /// and public (two concatenated UUIDs), not secret-dependent.
+    private static func constantTimeEquals(_ a: String, _ b: String) -> Bool {
+        let aBytes = Array(a.utf8)
+        let bBytes = Array(b.utf8)
+        guard aBytes.count == bBytes.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<aBytes.count {
+            diff |= aBytes[i] ^ bBytes[i]
+        }
+        return diff == 0
     }
 
     private func headerValue(_ headers: String, _ name: String) -> String? {
